@@ -9,7 +9,11 @@ import android.bluetooth.le.BluetoothLeAdvertiser
 import android.os.ParcelUuid
 import android.util.Log
 
-class BleAdvertiser(private val bluetoothAdapter: BluetoothAdapter) {
+class BleAdvertiser(
+    private val bluetoothAdapter: BluetoothAdapter,
+    private val onAdvertiseStarted: () -> Unit = {},
+    private val onAdvertiseError: (String) -> Unit = {}
+) {
 
     private val advertiser: BluetoothLeAdvertiser?
         get() = bluetoothAdapter.bluetoothLeAdvertiser
@@ -17,10 +21,12 @@ class BleAdvertiser(private val bluetoothAdapter: BluetoothAdapter) {
     private val callback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
             Log.d(TAG, "Advertising started")
+            onAdvertiseStarted()
         }
 
         override fun onStartFailure(errorCode: Int) {
             Log.e(TAG, "Advertising failed with code: $errorCode")
+            onAdvertiseError("advertise failed: code=$errorCode")
         }
     }
 
@@ -38,7 +44,12 @@ class BleAdvertiser(private val bluetoothAdapter: BluetoothAdapter) {
             .addServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
             .build()
 
-        advertiser?.startAdvertising(settings, data, callback)
+        val leAdvertiser = advertiser
+        if (leAdvertiser == null) {
+            onAdvertiseError("advertiser unavailable")
+            return
+        }
+        leAdvertiser.startAdvertising(settings, data, callback)
     }
 
     @SuppressLint("MissingPermission")
