@@ -42,6 +42,7 @@ class BleAdvertiser(
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(ParcelUuid(BleConstants.SERVICE_UUID))
+            .addManufacturerData(BleConstants.MANUFACTURER_ID, BleConstants.APP_MARKER)
             .build()
 
         val leAdvertiser = advertiser

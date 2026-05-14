@@ -9,6 +9,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 data class Message(
@@ -56,5 +58,26 @@ object WireCodec {
             }
         }
         return json.encodeToString(JsonObject.serializer(), obj)
+    }
+
+    fun decode(jsonStr: String): WirePacket? {
+        return try {
+            val obj = json.decodeFromString(JsonObject.serializer(), jsonStr)
+            when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
+                "message" -> {
+                    val payload = obj["message"]?.let { json.decodeFromJsonElement(MessagePayload.serializer(), it) }
+                    if (payload != null) WirePacket.PacketMessage(payload) else null
+                }
+
+                "ack" -> {
+                    val ackId = obj["ackID"]?.jsonPrimitive?.contentOrNull
+                    if (ackId != null) WirePacket.Ack(ackId) else null
+                }
+
+                else -> null
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 }

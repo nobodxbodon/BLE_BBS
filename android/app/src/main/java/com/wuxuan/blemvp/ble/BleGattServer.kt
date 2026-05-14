@@ -15,7 +15,8 @@ import android.util.Log
 class BleGattServer(
     private val context: Context,
     private val onInboundWrite: (data: ByteArray, fromAddress: String) -> Unit,
-    private val onConnectionStateChanged: (connected: Boolean, address: String) -> Unit
+    private val onConnectionStateChanged: (connected: Boolean, address: String) -> Unit,
+    private val onWriteArrived: (fromAddress: String, byteCount: Int) -> Unit = { _, _ -> }
 ) {
 
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
@@ -37,12 +38,19 @@ class BleGattServer(
             offset: Int,
             value: ByteArray
         ) {
+            Log.d(TAG, "Write request from ${device.address}: uuid=${characteristic.uuid} bytes=${value.size} responseNeeded=$responseNeeded")
+            onWriteArrived(device.address, value.size)
+            
             if (characteristic.uuid == BleConstants.WRITE_UUID && value.isNotEmpty()) {
+                Log.d(TAG, "UUID matched, invoking onInboundWrite with ${value.size} bytes from ${device.address}")
                 onInboundWrite(value, device.address)
+            } else {
+                Log.d(TAG, "UUID mismatch or empty: uuid=${characteristic.uuid} expected=${BleConstants.WRITE_UUID} empty=${value.isEmpty()}")
             }
 
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                Log.d(TAG, "Sent GATT response to ${device.address}")
             }
         }
     }

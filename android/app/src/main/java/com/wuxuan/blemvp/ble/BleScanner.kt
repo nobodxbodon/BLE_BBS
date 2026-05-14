@@ -31,16 +31,16 @@ class BleScanner(
 
             val uuids = result.scanRecord?.serviceUuids.orEmpty()
             val hasTargetService = uuids.any { it.uuid == BleConstants.SERVICE_UUID }
+            val marker = result.scanRecord?.getManufacturerSpecificData(BleConstants.MANUFACTURER_ID)
+            val hasAppMarker = marker?.contentEquals(BleConstants.APP_MARKER) == true
 
-            if (hasTargetService) {
+            if (hasTargetService && hasAppMarker) {
                 Log.d(TAG, "Discovered target device: $address")
                 onDiscovered(device)
                 return
             }
 
-            // Some OEMs provide incomplete UUID records; fallback so discovery still works.
-            Log.d(TAG, "Discovered device without UUID record: $address")
-            onDiscovered(device)
+            Log.d(TAG, "Ignoring non-target device: $address")
         }
 
         override fun onScanFailed(errorCode: Int) {
