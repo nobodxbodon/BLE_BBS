@@ -39,7 +39,6 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var bleEngine: BleEngine
     private val statusText = mutableStateOf("IDLE")
-    private val localAddressText = mutableStateOf("Unavailable")
     private val eventLines = mutableStateListOf<String>()
 
     private val requiredPermissions: Array<String>
@@ -57,11 +56,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bleEngine = BleEngine(this)
-        localAddressText.value = bleEngine.getLocalDeviceAddress()
         requestBlePermissionsIfNeeded()
         bleEngine.setLifecycleListener { state, detail ->
             runOnUiThread {
-                statusText.value = state.name
+                statusText.value = if (detail.isBlank()) state.name else "${state.name}: $detail"
                 val line = if (detail.isBlank()) state.name else "${state.name}: $detail"
                 eventLines.add(0, line)
                 if (eventLines.size > 40) {
@@ -74,7 +72,6 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 var inputText by remember { mutableStateOf("") }
                 BleStatusScreen(
-                    localAddress = localAddressText.value,
                     statusText = statusText.value,
                     events = eventLines,
                     inputText = inputText,
@@ -125,6 +122,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         bleEngine.setLifecycleListener(null)
         bleEngine.stop()
+        bleEngine.close()
         super.onDestroy()
     }
 
@@ -144,7 +142,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun BleStatusScreen(
-    localAddress: String,
     statusText: String,
     events: List<String>,
     inputText: String,
@@ -161,7 +158,6 @@ private fun BleStatusScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(text = "BLEOfflineMVP Android")
-        Text(text = "My MAC: $localAddress", modifier = Modifier.padding(top = 4.dp))
         Text(text = "Status: $statusText", modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
 
         OutlinedTextField(

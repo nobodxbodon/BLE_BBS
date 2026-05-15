@@ -78,6 +78,10 @@ class BleScanner(
         scanner?.stopScan(callback)
     }
 
+    fun forgetAddress(address: String) {
+        seenAddresses.remove(address)
+    }
+
     companion object {
         private const val TAG = "BleScanner"
     }

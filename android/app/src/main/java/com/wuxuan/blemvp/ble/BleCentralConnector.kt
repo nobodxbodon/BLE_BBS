@@ -8,6 +8,8 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 class BleCentralConnector(
@@ -92,6 +94,8 @@ class BleCentralConnector(
     private val inFlightWrites = mutableSetOf<String>()
     private val inFlightChunks = mutableMapOf<String, ByteArray>()
     private val inFlightRetryCounts = mutableMapOf<String, Int>()
+    private val handler = Handler(Looper.getMainLooper())
+    private val writeTimeouts = mutableMapOf<String, Runnable>()
 
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
@@ -104,11 +108,17 @@ class BleCentralConnector(
                     activeGatts[address] = gatt
                     Log.d(TAG, "Connected as central: $address")
                     onConnectionStateChanged(true, address)
-                    gatt.discoverServices()
+                    // Delay before service discovery to avoid GATT_ERROR 133 on Android.
+                    handler.postDelayed({
+                        if (activeGatts.containsKey(address)) {
+                            gatt.discoverServices()
+                        }
+                    }, DISCOVER_DELAY_MS)
                 }
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d(TAG, "Disconnected as central: $address (status=$status)")
+                    cancelWriteTimeout(address)
                     activeGatts.remove(address)
                     writableCharacteristics.remove(address)
                     outboundQueues.remove(address)
@@ -128,6 +138,7 @@ class BleCentralConnector(
         ) {
             val address = gatt.device.address
             if (!inFlightWrites.contains(address)) return
+            cancelWriteTimeout(address)
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 inFlightWrites.remove(address)
@@ -211,6 +222,8 @@ class BleCentralConnector(
     @SuppressLint("MissingPermission")
     fun disconnectAll() {
         pendingConnections.clear()
+        writeTimeouts.values.forEach { handler.removeCallbacks(it) }
+        writeTimeouts.clear()
         val snapshot = activeGatts.values.toList()
         activeGatts.clear()
         writableCharacteristics.clear()
@@ -284,6 +297,28 @@ class BleCentralConnector(
         inFlightWrites.add(address)
         inFlightChunks[address] = nextChunk
         inFlightRetryCounts[address] = 0
+        scheduleWriteTimeout(address, gatt)
+    }
+
+    private fun scheduleWriteTimeout(address: String, gatt: BluetoothGatt) {
+        cancelWriteTimeout(address)
+        val runnable = Runnable {
+            Log.w(TAG, "Write timeout for $address — closing zombie GATT")
+            activeGatts.remove(address)
+            writableCharacteristics.remove(address)
+            outboundQueues.remove(address)
+            inFlightWrites.remove(address)
+            inFlightChunks.remove(address)
+            inFlightRetryCounts.remove(address)
+            try { gatt.disconnect(); gatt.close() } catch (_: Throwable) {}
+            onConnectionStateChanged(false, address)
+        }
+        writeTimeouts[address] = runnable
+        handler.postDelayed(runnable, WRITE_TIMEOUT_MS)
+    }
+
+    private fun cancelWriteTimeout(address: String) {
+        writeTimeouts.remove(address)?.let { handler.removeCallbacks(it) }
     }
 
     private fun resolveWriteCharacteristic(
@@ -310,5 +345,7 @@ class BleCentralConnector(
         private const val MAX_CHUNK_BYTES = 20
         private const val MAX_PENDING_CHUNKS_PER_PEER = 120
         private const val MAX_WRITE_RETRIES = 2
+        private const val WRITE_TIMEOUT_MS = 3_000L
+        private const val DISCOVER_DELAY_MS = 300L
     }
 }
