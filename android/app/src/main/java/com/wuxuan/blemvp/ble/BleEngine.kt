@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.io.ByteArrayOutputStream
@@ -60,6 +61,7 @@ class BleEngine(context: Context) {
         },
         onWriteReady = { address ->
             emitState(BleLifecycleState.RUNNING, "Central write ready: $address")
+            syncHistoryToPeer(address)
         }
     )
 
@@ -267,6 +269,32 @@ class BleEngine(context: Context) {
             }
         }
         return true
+    }
+
+    private fun syncHistoryToPeer(address: String) {
+        storageScope.launch {
+            val posts = try {
+                postDao.getAllLatestFirst().asReversed() // oldest first → chronological delivery
+            } catch (t: Throwable) {
+                Log.e(TAG, "syncHistoryToPeer: failed to load posts", t)
+                return@launch
+            }
+            Log.d(TAG, "syncHistoryToPeer $address: ${posts.size} posts")
+            withContext(Dispatchers.Main) {
+                for (post in posts) {
+                    val payload = MessagePayload(
+                        id = post.id,
+                        text = post.text,
+                        sender = post.sender,
+                        timestamp = post.timestampIso8601
+                    )
+                    val packet = WirePacket.PacketMessage(payload)
+                    val framed = WireCodec.encode(packet) + "\n"
+                    val bytes = framed.toByteArray(Charsets.UTF_8)
+                    centralConnector.sendToPeer(address, bytes)
+                }
+            }
+        }
     }
 
     companion object {

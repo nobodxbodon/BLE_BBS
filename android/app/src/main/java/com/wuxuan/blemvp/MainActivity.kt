@@ -4,42 +4,52 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Spacer
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.lifecycle.lifecycleScope
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.wuxuan.blemvp.ble.BleEngine
+import com.wuxuan.blemvp.ble.BleLifecycleState
+import com.wuxuan.blemvp.storage.AppDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.wuxuan.blemvp.storage.PostEntity
+import kotlinx.coroutines.flow.Flow
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var bleEngine: BleEngine
-    private val statusText = mutableStateOf("IDLE")
-    private val eventLines = mutableStateListOf<String>()
+    private val bleStatusText = mutableStateOf("BLE: Stopped")
 
     private val requiredPermissions: Array<String>
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -56,57 +66,40 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         bleEngine = BleEngine(this)
+        val db = AppDatabase.getInstance(this)
         requestBlePermissionsIfNeeded()
         bleEngine.setLifecycleListener { state, detail ->
             runOnUiThread {
-                statusText.value = if (detail.isBlank()) state.name else "${state.name}: $detail"
-                val line = if (detail.isBlank()) state.name else "${state.name}: $detail"
-                eventLines.add(0, line)
-                if (eventLines.size > 40) {
-                    eventLines.removeAt(eventLines.lastIndex)
+                bleStatusText.value = when (state) {
+                    BleLifecycleState.RUNNING, BleLifecycleState.CONNECTED -> "BLE: Active"
+                    BleLifecycleState.STOPPED -> "BLE: Stopped"
+                    BleLifecycleState.ERROR -> "Error: $detail"
+                    else -> state.name
                 }
             }
         }
 
+        val postsFlow = db.postDao().getAllLatestFirstFlow()
+
         setContent {
             MaterialTheme {
                 var inputText by remember { mutableStateOf("") }
-                BleStatusScreen(
-                    statusText = statusText.value,
-                    events = eventLines,
+                FeedScreen(
+                    postsFlow = postsFlow,
+                    statusText = bleStatusText.value,
                     inputText = inputText,
                     onInputChange = { inputText = it },
-                    onSend = {
+                    onPost = {
                         val msg = inputText.trim()
                         if (msg.isNotEmpty()) {
                             val sendCount = bleEngine.sendMessageToAllPeers(msg)
-                            if (sendCount > 0) {
-                                eventLines.add(0, "SENT($sendCount): $msg")
-                            } else {
+                            if (sendCount == 0) {
                                 val snapshot = bleEngine.getPeerSnapshot()
-                                val reason = when {
-                                    snapshot.writableCount == 0 && snapshot.activeGattCount == 0 && snapshot.pendingCount > 0 ->
-                                        "waiting for connection"
-                                    snapshot.writableCount == 0 && snapshot.activeGattCount > 0 ->
-                                        "connected, waiting for writable characteristic"
-                                    snapshot.writableCount > 0 ->
-                                        "write failed (peer busy/reconnecting)"
-                                    else -> "no writable peer"
-                                }
-
-                                if (snapshot.writableCount > 0) {
-                                    eventLines.add(0, "SEND_RETRY: scheduling retry for '$msg'")
+                                if (snapshot.writableCount > 0 || snapshot.activeGattCount > 0) {
                                     lifecycleScope.launch {
-                                        delay(300)
-                                        val retryCount = bleEngine.sendMessageToAllPeers(msg)
-                                        if (retryCount > 0) {
-                                            eventLines.add(0, "SENT_RETRY($retryCount): $msg")
-                                        } else {
-                                            eventLines.add(0, "SEND_FAIL: $reason")
-                                        }
+                                        delay(400)
+                                        bleEngine.sendMessageToAllPeers(msg)
                                     }
-                                } else {
-                                    eventLines.add(0, "SEND_FAIL: $reason")
                                 }
                             }
                             inputText = ""
@@ -140,76 +133,105 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BleStatusScreen(
+private fun FeedScreen(
+    postsFlow: Flow<List<PostEntity>>,
     statusText: String,
-    events: List<String>,
     inputText: String,
     onInputChange: (String) -> Unit,
-    onSend: () -> Unit,
+    onPost: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit
 ) {
+    val posts by postsFlow.collectAsState(initial = emptyList())
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Top,
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(16.dp)
     ) {
-        Text(text = "BLEOfflineMVP Android")
-        Text(text = "Status: $statusText", modifier = Modifier.padding(top = 8.dp, bottom = 12.dp))
-
-        OutlinedTextField(
-            value = inputText,
-            onValueChange = onInputChange,
-            label = { Text("Type message") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true
-        )
-        Button(
-            onClick = onSend,
-            enabled = inputText.trim().isNotEmpty(),
+        // BLE lifecycle controls
+        Row(
             modifier = Modifier
-                .padding(top = 8.dp)
                 .fillMaxWidth()
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Send")
+            Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Start BLE") }
+            Button(onClick = onStop, modifier = Modifier.weight(1f)) { Text("Stop BLE") }
         }
-
-        Button(onClick = onStart, modifier = Modifier.padding(top = 16.dp)) {
-            Text("Start BLE")
-        }
-
-        Button(
-            onClick = onStop,
-            modifier = Modifier.padding(top = 12.dp)
-        ) {
-            Text("Stop")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "Live events (latest first)",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.fillMaxWidth()
+            text = statusText,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp)
         )
+
+        // Post feed — latest on top, right-aligned, full text (no truncation)
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp)
-                .weight(1f, fill = true)
+                .weight(1f)
+                .padding(vertical = 4.dp)
         ) {
-            if (events.isEmpty()) {
-                item { Text(text = "No BLE events yet") }
+            if (posts.isEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No posts yet",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
             } else {
-                items(events) { line ->
+                items(posts, key = { it.id }) { post ->
                     Text(
-                        text = line,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(vertical = 2.dp)
+                        text = post.text,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = {},
+                                onLongClick = {
+                                    clipboardManager.setText(AnnotatedString(post.text))
+                                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            .padding(vertical = 4.dp)
                     )
                 }
+            }
+        }
+
+        // Input area
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = onInputChange,
+                placeholder = { Text("Type a post") },
+                modifier = Modifier.weight(1f),
+                singleLine = false,
+                maxLines = 4
+            )
+            Button(
+                onClick = onPost,
+                enabled = inputText.trim().isNotEmpty(),
+                modifier = Modifier.align(Alignment.CenterVertically)
+            ) {
+                Text("Post")
             }
         }
     }
