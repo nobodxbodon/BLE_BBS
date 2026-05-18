@@ -43,6 +43,7 @@ class BleEngine(context: Context) {
 
     private var lifecycleListener: BleLifecycleListener? = null
     private var isBleStarted = false
+    private var scanRestartJob: kotlinx.coroutines.Job? = null
     private val inboundByteBuffers = mutableMapOf<String, ByteArrayOutputStream>()
 
     private val btStateReceiver = object : BroadcastReceiver() {
@@ -232,6 +233,13 @@ class BleEngine(context: Context) {
             },
             onScanError = { reason ->
                 emitState(BleLifecycleState.ERROR, reason)
+                // Auto-retry scan after a short pause. This handles transient hardware
+                if (isBleStarted) {
+                    storageScope.launch {
+                        delay(SCAN_ERROR_RETRY_MS)
+                        if (isBleStarted) scanner?.startScan()
+                    }
+                }
             }
         )
     }
@@ -260,6 +268,16 @@ class BleEngine(context: Context) {
         gattServer.start()
         scanner?.startScan()
         advertiser?.startAdvertising()
+        // Periodic restart
+        scanRestartJob = storageScope.launch {
+            while (true) {
+                delay(SCAN_RESTART_INTERVAL_MS)
+                if (!isBleStarted) break
+                Log.d(TAG, "periodic scan+advertise restart")
+                scanner?.startScan()
+                advertiser?.startAdvertising()
+            }
+        }
         storageScope.launch {
             try {
                 val all = postDao.getAllLatestFirst()
@@ -277,12 +295,24 @@ class BleEngine(context: Context) {
 
     fun stop() {
         isBleStarted = false
+        scanRestartJob?.cancel()
+        scanRestartJob = null
         try { appContext.unregisterReceiver(btStateReceiver) } catch (_: IllegalArgumentException) { }
         scanner?.stopScan()
         advertiser?.stopAdvertising()
         centralConnector.disconnectAll()
         gattServer.stop()
         emitState(BleLifecycleState.STOPPED, "")
+    }
+
+    /**
+     * Restart scan and advertising immediately.
+     */
+    fun rearmScan() {
+        if (!isBleStarted) return
+        Log.d(TAG, "rearmScan: restarting scan + advertising")
+        scanner?.startScan()
+        advertiser?.startAdvertising()
     }
 
     fun setLifecycleListener(listener: BleLifecycleListener?) {
@@ -352,5 +382,7 @@ class BleEngine(context: Context) {
         private const val TAG = "BleEngine"
         private const val MAX_BUFFER_CHARS = 8192
         private const val RECONNECT_DELAY_MS = 1_500L
+        private const val SCAN_ERROR_RETRY_MS = 5_000L          // retry after scan failure
+        private const val SCAN_RESTART_INTERVAL_MS = 5 * 60_000L // every 5 min
     }
 }

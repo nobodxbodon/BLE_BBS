@@ -68,6 +68,9 @@ class BleScanner(
             return
         }
 
+        // Stop any existing scan first
+        try { leScanner.stopScan(callback) } catch (_: Throwable) {}
+
         try {
             leScanner.startScan(null, settings, callback)
             onScanStarted("unfiltered")

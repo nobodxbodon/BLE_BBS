@@ -119,6 +119,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Restart scan + advertising every time the user brings the app to the foreground.
+        if (::bleEngine.isInitialized) bleEngine.rearmScan()
+    }
+
     override fun onDestroy() {
         bleEngine.setLifecycleListener(null)
         bleEngine.stop()
@@ -195,7 +201,7 @@ private fun FeedScreen(
                 Spacer(modifier = Modifier.weight(1f))
             }
             Text(
-                text = "DBG",
+                text = "DBG v0.0.1",
                 style = MaterialTheme.typography.labelSmall,
                 color = if (showDebug) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),

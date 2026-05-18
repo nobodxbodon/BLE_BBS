@@ -50,6 +50,9 @@ class BleAdvertiser(
             onAdvertiseError("advertiser unavailable")
             return
         }
+        // Stop any active session first - prevents ADVERTISE_FAILED_ALREADY_STARTED
+        // when this is called as part of a periodic restart.
+        try { leAdvertiser.stopAdvertising(callback) } catch (_: Throwable) {}
         leAdvertiser.startAdvertising(settings, data, callback)
     }
 
