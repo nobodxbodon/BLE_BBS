@@ -14,11 +14,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -26,8 +28,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,25 +43,30 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.wuxuan.blemvp.ble.BleEngine
-import com.wuxuan.blemvp.ble.BleLifecycleState
 import com.wuxuan.blemvp.storage.AppDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.wuxuan.blemvp.storage.PostEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var bleEngine: BleEngine
-    private val bleStatusText = mutableStateOf("BLE: Stopped")
+    private val bleStatusFlow = MutableStateFlow("BLE: starting…")
 
     private val requiredPermissions: Array<String>
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // BLUETOOTH_SCAN is declared with neverForLocation in the manifest,
+            // so ACCESS_FINE_LOCATION is not required on Android 12+.
             arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.ACCESS_FINE_LOCATION
+                Manifest.permission.BLUETOOTH_ADVERTISE
             )
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -65,48 +74,46 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         bleEngine = BleEngine(this)
+        bleEngine.setLifecycleListener { state, detail ->
+            bleStatusFlow.value = "[$state] $detail"
+        }
         val db = AppDatabase.getInstance(this)
         requestBlePermissionsIfNeeded()
-        bleEngine.setLifecycleListener { state, detail ->
-            runOnUiThread {
-                bleStatusText.value = when (state) {
-                    BleLifecycleState.RUNNING, BleLifecycleState.CONNECTED -> "BLE: Active"
-                    BleLifecycleState.STOPPED -> "BLE: Stopped"
-                    BleLifecycleState.ERROR -> "Error: $detail"
-                    else -> state.name
-                }
-            }
-        }
 
         val postsFlow = db.postDao().getAllLatestFirstFlow()
+
+        // Start BLE immediately if permissions are already granted (e.g. re-launch after first run).
+        // On first install, start is deferred to onRequestPermissionsResult.
+        if (hasAllPermissions()) bleEngine.start()
 
         setContent {
             MaterialTheme {
                 var inputText by remember { mutableStateOf("") }
+                val bleStatus by bleStatusFlow.collectAsState()
                 FeedScreen(
                     postsFlow = postsFlow,
-                    statusText = bleStatusText.value,
+                    bleStatus = bleStatus,
                     inputText = inputText,
                     onInputChange = { inputText = it },
+                    onForceSync = { bleEngine.forceSync() },
                     onPost = {
                         val msg = inputText.trim()
                         if (msg.isNotEmpty()) {
-                            val sendCount = bleEngine.sendMessageToAllPeers(msg)
+                            val (sendCount, encodedBytes) = bleEngine.sendMessageToAllPeers(msg)
                             if (sendCount == 0) {
                                 val snapshot = bleEngine.getPeerSnapshot()
-                                if (snapshot.writableCount > 0 || snapshot.activeGattCount > 0) {
+                                if (snapshot.writableCount > 0) {
                                     lifecycleScope.launch {
                                         delay(400)
-                                        bleEngine.sendMessageToAllPeers(msg)
+                                        bleEngine.retrySendToAllPeers(encodedBytes)
                                     }
                                 }
                             }
                             inputText = ""
                         }
-                    },
-                    onStart = { bleEngine.start() },
-                    onStop = { bleEngine.stop() }
+                    }
                 )
             }
         }
@@ -117,6 +124,21 @@ class MainActivity : ComponentActivity() {
         bleEngine.stop()
         bleEngine.close()
         super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_BLE_PERMS && hasAllPermissions()) {
+            bleEngine.start()
+        }
+    }
+
+    private fun hasAllPermissions() = requiredPermissions.all {
+        ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun requestBlePermissionsIfNeeded() {
@@ -137,42 +159,62 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun FeedScreen(
     postsFlow: Flow<List<PostEntity>>,
-    statusText: String,
+    bleStatus: String,
     inputText: String,
     onInputChange: (String) -> Unit,
-    onPost: () -> Unit,
-    onStart: () -> Unit,
-    onStop: () -> Unit
+    onForceSync: () -> Unit,
+    onPost: () -> Unit
 ) {
     val posts by postsFlow.collectAsState(initial = emptyList())
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .systemBarsPadding()
+            .imePadding()
             .padding(16.dp)
     ) {
-        // BLE lifecycle controls
+        // Debug toggle row
+        var showDebug by rememberSaveable { mutableStateOf(false) }
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(onClick = onStart, modifier = Modifier.weight(1f)) { Text("Start BLE") }
-            Button(onClick = onStop, modifier = Modifier.weight(1f)) { Text("Stop BLE") }
+            if (showDebug) {
+                Text(
+                    text = bleStatus,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+            Text(
+                text = "DBG",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (showDebug) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = { showDebug = !showDebug },
+                        onLongClick = { onForceSync() }
+                    )
+                    .padding(4.dp)
+            )
         }
-        Text(
-            text = statusText,
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp)
-        )
-
         // Post feed — latest on top, right-aligned, full text (no truncation)
+        val listState = rememberLazyListState()
+        // Auto-scroll to top whenever the newest post changes (local or received)
+        LaunchedEffect(posts.firstOrNull()?.id) {
+            if (posts.isNotEmpty()) listState.animateScrollToItem(0)
+        }
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -196,6 +238,7 @@ private fun FeedScreen(
                 items(posts, key = { it.id }) { post ->
                     Text(
                         text = post.text,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.End,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -227,7 +270,10 @@ private fun FeedScreen(
                 maxLines = 4
             )
             Button(
-                onClick = onPost,
+                onClick = {
+                    onPost()
+                    focusManager.clearFocus()
+                },
                 enabled = inputText.trim().isNotEmpty(),
                 modifier = Modifier.align(Alignment.CenterVertically)
             ) {

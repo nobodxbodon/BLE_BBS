@@ -87,6 +87,10 @@ class BleCentralConnector(
         return writableCharacteristics.keys.firstOrNull()
     }
 
+    fun getWritablePeerAddresses(): List<String> {
+        return writableCharacteristics.keys.toList()
+    }
+
     private val activeGatts = mutableMapOf<String, BluetoothGatt>()
     private val writableCharacteristics = mutableMapOf<String, BluetoothGattCharacteristic>()
     private val pendingConnections = mutableSetOf<String>()

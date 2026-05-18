@@ -89,8 +89,12 @@ class BleGattServer(
 
     @SuppressLint("MissingPermission")
     fun stop() {
-        gattServer?.clearServices()
-        gattServer?.close()
+        try {
+            gattServer?.clearServices()
+            gattServer?.close()
+        } catch (_: Throwable) {
+            // Ignore errors when BT is already off
+        }
         gattServer = null
     }
 

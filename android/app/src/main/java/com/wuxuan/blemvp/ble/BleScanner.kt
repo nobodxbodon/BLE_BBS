@@ -27,7 +27,8 @@ class BleScanner(
             if (result == null) return
             val device = result.device
             val address = device.address
-            if (!seenAddresses.add(address)) return
+            // Skip addresses we have already handed to onDiscovered.
+            if (seenAddresses.contains(address)) return
 
             val uuids = result.scanRecord?.serviceUuids.orEmpty()
             val hasTargetService = uuids.any { it.uuid == BleConstants.SERVICE_UUID }
@@ -35,6 +36,10 @@ class BleScanner(
             val hasAppMarker = marker?.contentEquals(BleConstants.APP_MARKER) == true
 
             if (hasTargetService && hasAppMarker) {
+                // Only lock the address in once we've confirmed it carries our app data.
+                // A device whose first packet has no service UUID will be re-evaluated on
+                // the next scan result rather than getting silently blacklisted.
+                seenAddresses.add(address)
                 Log.d(TAG, "Discovered target device: $address")
                 onDiscovered(device)
                 return

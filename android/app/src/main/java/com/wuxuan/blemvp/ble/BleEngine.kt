@@ -21,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.io.ByteArrayOutputStream
 
@@ -33,29 +34,53 @@ class BleEngine(context: Context) {
     private val postDao = AppDatabase.getInstance(appContext).postDao()
     private val knownMessageIds: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
+    private val localDeviceId: String = run {
+        val prefs = appContext.getSharedPreferences("blemvp_prefs", Context.MODE_PRIVATE)
+        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString("device_id", it).apply()
+        }
+    }
+
     private var lifecycleListener: BleLifecycleListener? = null
+    private var isBleStarted = false
     private val inboundByteBuffers = mutableMapOf<String, ByteArrayOutputStream>()
 
     private val btStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
             val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-            if (state == BluetoothAdapter.STATE_OFF) {
-                emitState(BleLifecycleState.ERROR, "Bluetooth turned off on this device")
+            when (state) {
+                BluetoothAdapter.STATE_OFF -> {
+                    // BT is going off — null the GATT-server reference now so start() works
+                    // cleanly when BT comes back on. Connections are dead; clean up maps.
+                    centralConnector.disconnectAll()
+                    gattServer.stop()
+                    emitState(BleLifecycleState.ERROR, "Bluetooth turned off on this device")
+                }
+                BluetoothAdapter.STATE_ON -> {
+                    if (isBleStarted) {
+                        // BT was re-enabled while BLE was running — clean up stale state and restart
+                        centralConnector.disconnectAll()
+                        inboundByteBuffers.clear()
+                        gattServer.start()
+                        scanner?.startScan()
+                        advertiser?.startAdvertising()
+                        emitState(BleLifecycleState.RUNNING, "Bluetooth re-enabled, BLE restarted")
+                    }
+                }
             }
         }
     }
 
     private val centralConnector: BleCentralConnector = BleCentralConnector(context,
         onConnectionStateChanged = { connected, address ->
-        // TODO: track active peers
         if (connected) {
             emitState(BleLifecycleState.CONNECTED, "Central connected: $address")
         } else {
-            storageScope.launch {
-                delay(RECONNECT_DELAY_MS)
-                scanner?.forgetAddress(address)
-            }
+            // Forget immediately so the peer is rediscoverable as soon as it comes back
+            // online (e.g. after a Bluetooth restart). Reconnect hammering is prevented
+            // by the delay in the onDiscovered → connect path below.
+            scanner?.forgetAddress(address)
             emitState(BleLifecycleState.RUNNING, "Central disconnected: $address")
         }
         },
@@ -138,16 +163,16 @@ class BleEngine(context: Context) {
             }
         }
     )
-    fun sendMessageToAllPeers(text: String): Int {
+    fun sendMessageToAllPeers(text: String): Pair<Int, ByteArray> {
         val snapshotBefore = centralConnector.getPeerSnapshot()
         emitState(
             BleLifecycleState.RUNNING,
             "send precheck: active=${snapshotBefore.activeGattCount}, writable=${snapshotBefore.writableCount}, pending=${snapshotBefore.pendingCount}"
         )
 
-        val msg = Message(text = text, senderName = "Android")
+        val msg = Message(text = text, senderName = localDeviceId)
         val packet = WirePacket.PacketMessage(MessagePayload.fromMessage(msg))
-    persistPayload(packet.payload, "send-local")
+        persistPayload(packet.payload, "send-local")
         val framed = WireCodec.encode(packet) + "\n"
         val bytes = framed.toByteArray(Charsets.UTF_8)
         Log.d(TAG, "sending '${text}' -> encoded: '$framed' -> ${bytes.size} bytes")
@@ -158,12 +183,27 @@ class BleEngine(context: Context) {
             BleLifecycleState.RUNNING,
             "sent count=$count (active=${snapshotAfter.activeGattCount}, writable=${snapshotAfter.writableCount}, pending=${snapshotAfter.pendingCount})"
         )
-        return count
+        return Pair(count, bytes)
+    }
+
+    /** Re-send pre-encoded bytes without creating a new message ID. Use for retries only. */
+    fun retrySendToAllPeers(bytes: ByteArray): Int {
+        return centralConnector.sendToAllConnectedGatt(bytes)
     }
 
     fun getPeerSnapshot(): BleCentralConnector.PeerSnapshot {
         return centralConnector.getPeerSnapshot()
     }
+
+    /** Push our full local history to every currently-writable peer. Call this manually
+     *  if a peer came back into range but the automatic on-connect sync didn't deliver. */
+    fun forceSync() {
+        val addresses = centralConnector.getWritablePeerAddresses()
+        Log.d(TAG, "forceSync: pushing history to ${addresses.size} peer(s)")
+        addresses.forEach { syncHistoryToPeer(it) }
+    }
+
+    fun getLocalDeviceId(): String = localDeviceId
 
     fun getLocalDeviceAddress(): String {
         return try {
@@ -178,7 +218,14 @@ class BleEngine(context: Context) {
             bluetoothAdapter = it,
             onDiscovered = { device ->
                 emitState(BleLifecycleState.CONNECTING, "Discovered ${device.address}, connecting")
-                centralConnector.connect(device)
+                // Delay on IO then hop to Main for the GATT connect call. All BleCentralConnector
+                // state (activeGatts, pendingConnections) is accessed from the main thread only.
+                storageScope.launch {
+                    delay(RECONNECT_DELAY_MS)
+                    withContext(Dispatchers.Main) {
+                        centralConnector.connect(device)
+                    }
+                }
             },
             onScanStarted = { mode ->
                 emitState(BleLifecycleState.RUNNING, "scan started ($mode)")
@@ -201,6 +248,8 @@ class BleEngine(context: Context) {
     }
 
     fun start() {
+        if (isBleStarted) return  // idempotent — ignore if already running
+
         if (adapter == null || !adapter.isEnabled) {
             Log.e(TAG, "Bluetooth adapter unavailable or disabled")
             emitState(BleLifecycleState.ERROR, "Bluetooth unavailable or disabled")
@@ -223,9 +272,11 @@ class BleEngine(context: Context) {
             }
         }
         emitState(BleLifecycleState.RUNNING, "ble up")
+        isBleStarted = true
     }
 
     fun stop() {
+        isBleStarted = false
         try { appContext.unregisterReceiver(btStateReceiver) } catch (_: IllegalArgumentException) { }
         scanner?.stopScan()
         advertiser?.stopAdvertising()
@@ -300,6 +351,6 @@ class BleEngine(context: Context) {
     companion object {
         private const val TAG = "BleEngine"
         private const val MAX_BUFFER_CHARS = 8192
-        private const val RECONNECT_DELAY_MS = 5_000L
+        private const val RECONNECT_DELAY_MS = 1_500L
     }
 }
