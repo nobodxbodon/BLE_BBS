@@ -10,7 +10,7 @@ import android.bluetooth.le.ScanSettings
 import android.os.ParcelUuid
 import android.util.Log
 
-class BleScanner(
+class 蓝牙扫描器(
     private val bluetoothAdapter: BluetoothAdapter,
     private val onDiscovered: (BluetoothDevice) -> Unit,
     private val onScanStarted: (mode: String) -> Unit = {},
@@ -19,7 +19,7 @@ class BleScanner(
 
     private val seenAddresses = mutableSetOf<String>()
 
-    private val scanner: BluetoothLeScanner?
+    private val 扫描器: BluetoothLeScanner?
         get() = bluetoothAdapter.bluetoothLeScanner
 
     private val callback = object : ScanCallback() {
@@ -31,13 +31,13 @@ class BleScanner(
             if (seenAddresses.contains(address)) return
 
             val uuids = result.scanRecord?.serviceUuids.orEmpty()
-            val hasTargetService = uuids.any { it.uuid == BleConstants.SERVICE_UUID }
-            val marker = result.scanRecord?.getManufacturerSpecificData(BleConstants.MANUFACTURER_ID)
-            val hasAppMarker = marker?.contentEquals(BleConstants.APP_MARKER) == true
+            val hasTargetService = uuids.any { it.uuid == 蓝牙常量.服务UUID }
+            val marker = result.scanRecord?.getManufacturerSpecificData(蓝牙常量.厂商编号)
+            val hasAppMarker = marker?.contentEquals(蓝牙常量.应用标记) == true
 
             if (hasTargetService && hasAppMarker) {
                 // Only lock the address in once we've confirmed it carries our app data.
-                // A device whose first packet has no service UUID will be re-evaluated on
+                // A device whose first 传输包 has no service UUID will be re-evaluated on
                 // the next scan result rather than getting silently blacklisted.
                 seenAddresses.add(address)
                 Log.d(TAG, "Discovered target device: $address")
@@ -55,16 +55,16 @@ class BleScanner(
     }
 
     @SuppressLint("MissingPermission")
-    fun startScan() {
+    fun 开始扫描() {
         seenAddresses.clear()
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        val leScanner = scanner
+        val leScanner = 扫描器
         if (leScanner == null) {
-            onScanError("scanner unavailable")
+            onScanError("扫描器 unavailable")
             return
         }
 
@@ -77,20 +77,20 @@ class BleScanner(
             Log.d(TAG, "BLE scan started (unfiltered)")
         } catch (t: Throwable) {
             Log.e(TAG, "Unfiltered scan failed", t)
-            onScanError("scan start failed: ${t.message ?: "unknown"}")
+            onScanError("scan 启动 failed: ${t.message ?: "unknown"}")
         }
     }
 
     @SuppressLint("MissingPermission")
-    fun stopScan() {
-        scanner?.stopScan(callback)
+    fun 停止扫描() {
+        扫描器?.stopScan(callback)
     }
 
-    fun forgetAddress(address: String) {
+    fun 忘记地址(address: String) {
         seenAddresses.remove(address)
     }
 
     companion object {
-        private const val TAG = "BleScanner"
+        private const val TAG = "蓝牙扫描器"
     }
 }

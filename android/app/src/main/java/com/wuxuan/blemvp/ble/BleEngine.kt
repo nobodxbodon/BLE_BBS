@@ -7,10 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
-import com.wuxuan.blemvp.model.Message
-import com.wuxuan.blemvp.model.MessagePayload
-import com.wuxuan.blemvp.model.WireCodec
-import com.wuxuan.blemvp.model.WirePacket
+import com.wuxuan.blemvp.model.帖子
+import com.wuxuan.blemvp.model.帖子载荷
+import com.wuxuan.blemvp.model.传输编解码器
+import com.wuxuan.blemvp.model.传输包
 import com.wuxuan.blemvp.storage.AppDatabase
 import com.wuxuan.blemvp.storage.PostEntity
 import kotlinx.coroutines.CoroutineScope
@@ -25,84 +25,84 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.io.ByteArrayOutputStream
 
-class BleEngine(context: Context) {
+class 蓝牙引擎(context: Context) {
 
     private val appContext = context.applicationContext
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private val adapter = bluetoothManager?.adapter
     private val storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val postDao = AppDatabase.getInstance(appContext).postDao()
-    private val knownMessageIds: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+    private val 已知帖子编号: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
-    private val localDeviceId: String = run {
+    private val 本机设备编号: String = run {
         val prefs = appContext.getSharedPreferences("blemvp_prefs", Context.MODE_PRIVATE)
         prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
             prefs.edit().putString("device_id", it).apply()
         }
     }
 
-    private var lifecycleListener: BleLifecycleListener? = null
-    private var isBleStarted = false
-    private var scanRestartJob: kotlinx.coroutines.Job? = null
-    private val inboundByteBuffers = mutableMapOf<String, ByteArrayOutputStream>()
+    private var 生命周期监听器: 蓝牙生命周期监听器? = null
+    private var 蓝牙已启动 = false
+    private var 扫描重启任务: kotlinx.coroutines.Job? = null
+    private val 入站字节缓冲区 = mutableMapOf<String, ByteArrayOutputStream>()
 
-    private val btStateReceiver = object : BroadcastReceiver() {
+    private val 蓝牙状态接收器 = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
             val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
             when (state) {
                 BluetoothAdapter.STATE_OFF -> {
-                    // BT is going off — null the GATT-server reference now so start() works
+                    // BT is going off — null the GATT-server reference now so 启动() works
                     // cleanly when BT comes back on. Connections are dead; clean up maps.
-                    centralConnector.disconnectAll()
-                    gattServer.stop()
-                    emitState(BleLifecycleState.ERROR, "Bluetooth turned off on this device")
+                    中心连接器.断开全部()
+                    gatt服务端.停止()
+                    emitState(蓝牙生命周期状态.错误, "Bluetooth turned off on this device")
                 }
                 BluetoothAdapter.STATE_ON -> {
-                    if (isBleStarted) {
+                    if (蓝牙已启动) {
                         // BT was re-enabled while BLE was running — clean up stale state and restart
-                        centralConnector.disconnectAll()
-                        inboundByteBuffers.clear()
-                        gattServer.start()
-                        scanner?.startScan()
-                        advertiser?.startAdvertising()
-                        emitState(BleLifecycleState.RUNNING, "Bluetooth re-enabled, BLE restarted")
+                        中心连接器.断开全部()
+                        入站字节缓冲区.clear()
+                        gatt服务端.启动()
+                        扫描器?.开始扫描()
+                        广播器?.开始广播()
+                        emitState(蓝牙生命周期状态.运行中, "Bluetooth re-enabled, BLE restarted")
                     }
                 }
             }
         }
     }
 
-    private val centralConnector: BleCentralConnector = BleCentralConnector(context,
-        onConnectionStateChanged = { connected, address ->
+    private val 中心连接器: 蓝牙中心连接器 = 蓝牙中心连接器(context,
+        on连接状态变化 = { connected, address ->
         if (connected) {
-            emitState(BleLifecycleState.CONNECTED, "Central connected: $address")
+            emitState(蓝牙生命周期状态.已连接, "Central connected: $address")
         } else {
             // Forget immediately so the peer is rediscoverable as soon as it comes back
             // online (e.g. after a Bluetooth restart). Reconnect hammering is prevented
-            // by the delay in the onDiscovered → connect path below.
-            scanner?.forgetAddress(address)
-            emitState(BleLifecycleState.RUNNING, "Central disconnected: $address")
+            // by the delay in the onDiscovered → 连接 path below.
+            扫描器?.忘记地址(address)
+            emitState(蓝牙生命周期状态.运行中, "Central disconnected: $address")
         }
         },
         onWriteReady = { address ->
-            emitState(BleLifecycleState.RUNNING, "Central write ready: $address")
+            emitState(蓝牙生命周期状态.运行中, "Central write ready: $address")
             syncHistoryToPeer(address)
         }
     )
 
-    private val gattServer = BleGattServer(
+    private val gatt服务端 = 蓝牙Gatt服务端(
         context = context,
         onWriteArrived = { fromAddress, byteCount ->
-            emitState(BleLifecycleState.RUNNING, "Write arrived: $byteCount bytes from $fromAddress")
+            emitState(蓝牙生命周期状态.运行中, "Write arrived: $byteCount bytes from $fromAddress")
         },
         onInboundWrite = { data, fromAddress ->
             Log.d(TAG, "rx ${data.size}b from $fromAddress")
-            val buffer = inboundByteBuffers.getOrPut(fromAddress) { ByteArrayOutputStream() }
+            val buffer = 入站字节缓冲区.getOrPut(fromAddress) { ByteArrayOutputStream() }
             buffer.write(data)
 
             // Accumulate raw bytes and scan for newline (0x0A) byte.
-            // Only decode to UTF-8 after a complete frame is found so that
+            // Only 解码 to UTF-8 after a complete frame is found so that
             // multi-byte characters (e.g. Chinese) split across chunk boundaries
             // are reassembled before decoding.
             val bufBytes = buffer.toByteArray()
@@ -119,14 +119,14 @@ class BleEngine(context: Context) {
                 if (frame.isBlank()) continue
 
                 Log.d(TAG, "parsing frame (${nlIdx - (consumed - 1)} bytes)")
-                val packet = WireCodec.decode(frame)
-                if (packet is WirePacket.PacketMessage) {
-                    Log.d(TAG, "decoded message: '${packet.payload.text}'")
-                    if (persistPayload(packet.payload, "recv:$fromAddress")) {
-                        emitState(BleLifecycleState.RUNNING, "RECV from $fromAddress: ${packet.payload.text}")
+                val 收到包 = 传输编解码器.解码(frame)
+                if (收到包 is 传输包.帖子包) {
+                    Log.d(TAG, "decoded message: '${收到包.载荷.正文}'")
+                    if (persistPayload(收到包.载荷, "recv:$fromAddress")) {
+                        emitState(蓝牙生命周期状态.运行中, "RECV from $fromAddress: ${收到包.载荷.正文}")
                     }
                 } else {
-                    Log.d(TAG, "decode returned null or non-message packet")
+                    Log.d(TAG, "解码 returned null or non-message 传输包")
                 }
             }
 
@@ -136,15 +136,15 @@ class BleEngine(context: Context) {
                 buffer.write(bufBytes, consumed, bufBytes.size - consumed)
             }
 
-            // Compat: try single-packet decode on remainder (no trailing newline).
+            // Compat: try single-传输包 解码 on remainder (no trailing newline).
             val remaining = buffer.toByteArray()
             if (remaining.isNotEmpty()) {
                 val snapshot = String(remaining, Charsets.UTF_8).trim()
-                val packet = WireCodec.decode(snapshot)
-                if (packet is WirePacket.PacketMessage) {
-                    Log.d(TAG, "compat decode succeeded: '${packet.payload.text}'")
-                    if (persistPayload(packet.payload, "recv-compat:$fromAddress")) {
-                        emitState(BleLifecycleState.RUNNING, "RECV from $fromAddress: ${packet.payload.text}")
+                val 收到包 = 传输编解码器.解码(snapshot)
+                if (收到包 is 传输包.帖子包) {
+                    Log.d(TAG, "compat 解码 succeeded: '${收到包.载荷.正文}'")
+                    if (persistPayload(收到包.载荷, "recv-compat:$fromAddress")) {
+                        emitState(蓝牙生命周期状态.运行中, "RECV from $fromAddress: ${收到包.载荷.正文}")
                     }
                     buffer.reset()
                 }
@@ -152,61 +152,61 @@ class BleEngine(context: Context) {
 
             if (buffer.size() > MAX_BUFFER_CHARS) {
                 buffer.reset()
-                emitState(BleLifecycleState.ERROR, "inbound buffer overflow from $fromAddress")
+                emitState(蓝牙生命周期状态.错误, "inbound buffer overflow from $fromAddress")
             }
         },
-        onConnectionStateChanged = { connected, address ->
+        on连接状态变化 = { connected, address ->
             if (connected) {
-                emitState(BleLifecycleState.CONNECTED, "Peripheral connected: $address")
+                emitState(蓝牙生命周期状态.已连接, "Peripheral connected: $address")
             } else {
-                inboundByteBuffers.remove(address)
-                emitState(BleLifecycleState.RUNNING, "Peripheral disconnected: $address")
+                入站字节缓冲区.remove(address)
+                emitState(蓝牙生命周期状态.运行中, "Peripheral disconnected: $address")
             }
         }
     )
-    fun sendMessageToAllPeers(text: String): Pair<Int, ByteArray> {
-        val snapshotBefore = centralConnector.getPeerSnapshot()
+    fun 发送帖子给所有邻机(text: String): Pair<Int, ByteArray> {
+        val snapshotBefore = 中心连接器.获取邻机快照()
         emitState(
-            BleLifecycleState.RUNNING,
-            "send precheck: active=${snapshotBefore.activeGattCount}, writable=${snapshotBefore.writableCount}, pending=${snapshotBefore.pendingCount}"
+            蓝牙生命周期状态.运行中,
+            "send precheck: active=${snapshotBefore.活跃Gatt数}, writable=${snapshotBefore.可写邻机数}, pending=${snapshotBefore.待连接数}"
         )
 
-        val msg = Message(text = text, senderName = localDeviceId)
-        val packet = WirePacket.PacketMessage(MessagePayload.fromMessage(msg))
-        persistPayload(packet.payload, "send-local")
-        val framed = WireCodec.encode(packet) + "\n"
+        val msg = 帖子(正文 = text, 发帖人 = 本机设备编号)
+        val 待发包 = 传输包.帖子包(帖子载荷.由帖子生成(msg))
+        persistPayload(待发包.载荷, "send-local")
+        val framed = 传输编解码器.编码(待发包) + "\n"
         val bytes = framed.toByteArray(Charsets.UTF_8)
         Log.d(TAG, "sending '${text}' -> encoded: '$framed' -> ${bytes.size} bytes")
-        val count = centralConnector.sendToAllConnectedGatt(bytes)
-        Log.d(TAG, "sendToAllConnectedGatt returned count=$count")
-        val snapshotAfter = centralConnector.getPeerSnapshot()
+        val count = 中心连接器.发送给所有已连接Gatt(bytes)
+        Log.d(TAG, "发送给所有已连接Gatt returned count=$count")
+        val snapshotAfter = 中心连接器.获取邻机快照()
         emitState(
-            BleLifecycleState.RUNNING,
-            "sent count=$count (active=${snapshotAfter.activeGattCount}, writable=${snapshotAfter.writableCount}, pending=${snapshotAfter.pendingCount})"
+            蓝牙生命周期状态.运行中,
+            "sent count=$count (active=${snapshotAfter.活跃Gatt数}, writable=${snapshotAfter.可写邻机数}, pending=${snapshotAfter.待连接数})"
         )
         return Pair(count, bytes)
     }
 
     /** Re-send pre-encoded bytes without creating a new message ID. Use for retries only. */
-    fun retrySendToAllPeers(bytes: ByteArray): Int {
-        return centralConnector.sendToAllConnectedGatt(bytes)
+    fun 重试发送给所有邻机(bytes: ByteArray): Int {
+        return 中心连接器.发送给所有已连接Gatt(bytes)
     }
 
-    fun getPeerSnapshot(): BleCentralConnector.PeerSnapshot {
-        return centralConnector.getPeerSnapshot()
+    fun 获取邻机快照(): 蓝牙中心连接器.邻机快照 {
+        return 中心连接器.获取邻机快照()
     }
 
     /** Push our full local history to every currently-writable peer. Call this manually
-     *  if a peer came back into range but the automatic on-connect sync didn't deliver. */
-    fun forceSync() {
-        val addresses = centralConnector.getWritablePeerAddresses()
-        Log.d(TAG, "forceSync: pushing history to ${addresses.size} peer(s)")
+     *  if a peer came back into range but the automatic on-连接 sync didn't deliver. */
+    fun 强制同步() {
+        val addresses = 中心连接器.取可写邻机地址()
+        Log.d(TAG, "强制同步: pushing history to ${addresses.size} peer(s)")
         addresses.forEach { syncHistoryToPeer(it) }
     }
 
-    fun getLocalDeviceId(): String = localDeviceId
+    fun 获取本机设备编号(): String = 本机设备编号
 
-    fun getLocalDeviceAddress(): String {
+    fun 获取本机设备地址(): String {
         return try {
             adapter?.address ?: "Unavailable"
         } catch (_: SecurityException) {
@@ -214,139 +214,139 @@ class BleEngine(context: Context) {
         }
     }
 
-    private val scanner: BleScanner? = adapter?.let {
-        BleScanner(
+    private val 扫描器: 蓝牙扫描器? = adapter?.let {
+        蓝牙扫描器(
             bluetoothAdapter = it,
             onDiscovered = { device ->
-                emitState(BleLifecycleState.CONNECTING, "Discovered ${device.address}, connecting")
-                // Delay on IO then hop to Main for the GATT connect call. All BleCentralConnector
+                emitState(蓝牙生命周期状态.连接中, "Discovered ${device.address}, connecting")
+                // Delay on IO then hop to Main for the GATT 连接 call. All 蓝牙中心连接器
                 // state (activeGatts, pendingConnections) is accessed from the main thread only.
                 storageScope.launch {
                     delay(RECONNECT_DELAY_MS)
                     withContext(Dispatchers.Main) {
-                        centralConnector.connect(device)
+                        中心连接器.连接(device)
                     }
                 }
             },
             onScanStarted = { mode ->
-                emitState(BleLifecycleState.RUNNING, "scan started ($mode)")
+                emitState(蓝牙生命周期状态.运行中, "scan started ($mode)")
             },
             onScanError = { reason ->
-                emitState(BleLifecycleState.ERROR, reason)
+                emitState(蓝牙生命周期状态.错误, reason)
                 // Auto-retry scan after a short pause. This handles transient hardware
-                if (isBleStarted) {
+                if (蓝牙已启动) {
                     storageScope.launch {
                         delay(SCAN_ERROR_RETRY_MS)
-                        if (isBleStarted) scanner?.startScan()
+                        if (蓝牙已启动) 扫描器?.开始扫描()
                     }
                 }
             }
         )
     }
-    private val advertiser = adapter?.let {
-        BleAdvertiser(
+    private val 广播器 = adapter?.let {
+        蓝牙广播器(
             bluetoothAdapter = it,
             onAdvertiseStarted = {
-                emitState(BleLifecycleState.RUNNING, "advertising started")
+                emitState(蓝牙生命周期状态.运行中, "advertising started")
             },
             onAdvertiseError = { reason ->
-                emitState(BleLifecycleState.ERROR, reason)
+                emitState(蓝牙生命周期状态.错误, reason)
             }
         )
     }
 
-    fun start() {
-        if (isBleStarted) return  // idempotent — ignore if already running
+    fun 启动() {
+        if (蓝牙已启动) return  // idempotent — ignore if already running
 
         if (adapter == null || !adapter.isEnabled) {
             Log.e(TAG, "Bluetooth adapter unavailable or disabled")
-            emitState(BleLifecycleState.ERROR, "Bluetooth unavailable or disabled")
+            emitState(蓝牙生命周期状态.错误, "Bluetooth unavailable or disabled")
             return
         }
 
-        appContext.registerReceiver(btStateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
-        gattServer.start()
-        scanner?.startScan()
-        advertiser?.startAdvertising()
+        appContext.registerReceiver(蓝牙状态接收器, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        gatt服务端.启动()
+        扫描器?.开始扫描()
+        广播器?.开始广播()
         // Periodic restart
-        scanRestartJob = storageScope.launch {
+        扫描重启任务 = storageScope.launch {
             while (true) {
                 delay(SCAN_RESTART_INTERVAL_MS)
-                if (!isBleStarted) break
+                if (!蓝牙已启动) break
                 Log.d(TAG, "periodic scan+advertise restart")
-                scanner?.startScan()
-                advertiser?.startAdvertising()
+                扫描器?.开始扫描()
+                广播器?.开始广播()
             }
         }
         storageScope.launch {
             try {
                 val all = postDao.getAllLatestFirst()
-                knownMessageIds.clear()
-                knownMessageIds.addAll(all.map { it.id })
-                emitState(BleLifecycleState.RUNNING, "store ready: cached posts=${all.size}")
+                已知帖子编号.clear()
+                已知帖子编号.addAll(all.map { it.id })
+                emitState(蓝牙生命周期状态.运行中, "store ready: cached posts=${all.size}")
             } catch (t: Throwable) {
                 Log.e(TAG, "Failed to read cached posts", t)
-                emitState(BleLifecycleState.ERROR, "store read failed: ${t.message ?: "unknown"}")
+                emitState(蓝牙生命周期状态.错误, "store read failed: ${t.message ?: "unknown"}")
             }
         }
-        emitState(BleLifecycleState.RUNNING, "ble up")
-        isBleStarted = true
+        emitState(蓝牙生命周期状态.运行中, "ble up")
+        蓝牙已启动 = true
     }
 
-    fun stop() {
-        isBleStarted = false
-        scanRestartJob?.cancel()
-        scanRestartJob = null
-        try { appContext.unregisterReceiver(btStateReceiver) } catch (_: IllegalArgumentException) { }
-        scanner?.stopScan()
-        advertiser?.stopAdvertising()
-        centralConnector.disconnectAll()
-        gattServer.stop()
-        emitState(BleLifecycleState.STOPPED, "")
+    fun 停止() {
+        蓝牙已启动 = false
+        扫描重启任务?.cancel()
+        扫描重启任务 = null
+        try { appContext.unregisterReceiver(蓝牙状态接收器) } catch (_: IllegalArgumentException) { }
+        扫描器?.停止扫描()
+        广播器?.停止广播()
+        中心连接器.断开全部()
+        gatt服务端.停止()
+        emitState(蓝牙生命周期状态.已停止, "")
     }
 
     /**
      * Restart scan and advertising immediately.
      */
-    fun rearmScan() {
-        if (!isBleStarted) return
-        Log.d(TAG, "rearmScan: restarting scan + advertising")
-        scanner?.startScan()
-        advertiser?.startAdvertising()
+    fun 重启扫描() {
+        if (!蓝牙已启动) return
+        Log.d(TAG, "重启扫描: restarting scan + advertising")
+        扫描器?.开始扫描()
+        广播器?.开始广播()
     }
 
-    fun setLifecycleListener(listener: BleLifecycleListener?) {
-        lifecycleListener = listener
+    fun 设置生命周期监听器(listener: 蓝牙生命周期监听器?) {
+        生命周期监听器 = listener
     }
 
-    fun close() {
+    fun 关闭() {
         storageScope.cancel()
     }
 
-    private fun emitState(state: BleLifecycleState, detail: String) {
+    private fun emitState(state: 蓝牙生命周期状态, detail: String) {
         Log.d(TAG, "state=$state detail=$detail")
-        lifecycleListener?.onStateChanged(state, detail)
+        生命周期监听器?.状态变化(state, detail)
     }
 
-    private fun persistPayload(payload: MessagePayload, source: String): Boolean {
-        if (!knownMessageIds.add(payload.id)) {
-            Log.d(TAG, "dedup: skip known id=${payload.id} source=$source")
+    private fun persistPayload(载荷: 帖子载荷, source: String): Boolean {
+        if (!已知帖子编号.add(载荷.编号)) {
+            Log.d(TAG, "dedup: skip known id=${载荷.编号} source=$source")
             return false
         }
         storageScope.launch {
             try {
                 postDao.upsert(
                     PostEntity(
-                        id = payload.id,
-                        text = payload.text,
-                        sender = payload.sender,
-                        timestampIso8601 = payload.timestamp
+                        id = 载荷.编号,
+                        text = 载荷.正文,
+                        sender = 载荷.发帖人,
+                        timestampIso8601 = 载荷.时间戳
                     )
                 )
-                Log.d(TAG, "Persisted message ${payload.id} source=$source")
+                Log.d(TAG, "Persisted message ${载荷.编号} source=$source")
             } catch (t: Throwable) {
                 Log.e(TAG, "Persist failed source=$source", t)
-                emitState(BleLifecycleState.ERROR, "store write failed: ${t.message ?: "unknown"}")
+                emitState(蓝牙生命周期状态.错误, "store write failed: ${t.message ?: "unknown"}")
             }
         }
         return true
@@ -363,23 +363,23 @@ class BleEngine(context: Context) {
             Log.d(TAG, "syncHistoryToPeer $address: ${posts.size} posts")
             withContext(Dispatchers.Main) {
                 for (post in posts) {
-                    val payload = MessagePayload(
-                        id = post.id,
-                        text = post.text,
-                        sender = post.sender,
-                        timestamp = post.timestampIso8601
+                    val 载荷 = 帖子载荷(
+                        编号 = post.id,
+                        正文 = post.text,
+                        发帖人 = post.sender,
+                        时间戳 = post.timestampIso8601
                     )
-                    val packet = WirePacket.PacketMessage(payload)
-                    val framed = WireCodec.encode(packet) + "\n"
+                    val 待发包 = 传输包.帖子包(载荷)
+                    val framed = 传输编解码器.编码(待发包) + "\n"
                     val bytes = framed.toByteArray(Charsets.UTF_8)
-                    centralConnector.sendToPeer(address, bytes)
+                    中心连接器.发送给指定邻机(address, bytes)
                 }
             }
         }
     }
 
     companion object {
-        private const val TAG = "BleEngine"
+        private const val TAG = "蓝牙引擎"
         private const val MAX_BUFFER_CHARS = 8192
         private const val RECONNECT_DELAY_MS = 1_500L
         private const val SCAN_ERROR_RETRY_MS = 5_000L          // retry after scan failure

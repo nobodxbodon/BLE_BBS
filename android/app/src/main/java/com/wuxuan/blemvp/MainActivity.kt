@@ -42,7 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.wuxuan.blemvp.ble.BleEngine
+import com.wuxuan.blemvp.ble.蓝牙引擎
 import com.wuxuan.blemvp.storage.AppDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -56,7 +56,7 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bleEngine: BleEngine
+    private lateinit var bleEngine: 蓝牙引擎
     private val bleStatusFlow = MutableStateFlow("BLE: starting…")
 
     private val requiredPermissions: Array<String>
@@ -75,8 +75,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        bleEngine = BleEngine(this)
-        bleEngine.setLifecycleListener { state, detail ->
+        bleEngine = 蓝牙引擎(this)
+        bleEngine.设置生命周期监听器 { state, detail ->
             bleStatusFlow.value = "[$state] $detail"
         }
         val db = AppDatabase.getInstance(this)
@@ -85,29 +85,29 @@ class MainActivity : ComponentActivity() {
         val postsFlow = db.postDao().getAllLatestFirstFlow()
 
         // Start BLE immediately if permissions are already granted (e.g. re-launch after first run).
-        // On first install, start is deferred to onRequestPermissionsResult.
-        if (hasAllPermissions()) bleEngine.start()
+        // On first install, 启动 is deferred to onRequestPermissionsResult.
+        if (hasAllPermissions()) bleEngine.启动()
 
         setContent {
             MaterialTheme {
                 var inputText by remember { mutableStateOf("") }
                 val bleStatus by bleStatusFlow.collectAsState()
-                FeedScreen(
+                帖子流界面(
                     postsFlow = postsFlow,
                     bleStatus = bleStatus,
                     inputText = inputText,
                     onInputChange = { inputText = it },
-                    onForceSync = { bleEngine.forceSync() },
+                    onForceSync = { bleEngine.强制同步() },
                     onPost = {
                         val msg = inputText.trim()
                         if (msg.isNotEmpty()) {
-                            val (sendCount, encodedBytes) = bleEngine.sendMessageToAllPeers(msg)
+                            val (sendCount, encodedBytes) = bleEngine.发送帖子给所有邻机(msg)
                             if (sendCount == 0) {
-                                val snapshot = bleEngine.getPeerSnapshot()
-                                if (snapshot.writableCount > 0) {
+                                val snapshot = bleEngine.获取邻机快照()
+                                if (snapshot.可写邻机数 > 0) {
                                     lifecycleScope.launch {
                                         delay(400)
-                                        bleEngine.retrySendToAllPeers(encodedBytes)
+                                        bleEngine.重试发送给所有邻机(encodedBytes)
                                     }
                                 }
                             }
@@ -122,13 +122,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Restart scan + advertising every time the user brings the app to the foreground.
-        if (::bleEngine.isInitialized) bleEngine.rearmScan()
+        if (::bleEngine.isInitialized) bleEngine.重启扫描()
     }
 
     override fun onDestroy() {
-        bleEngine.setLifecycleListener(null)
-        bleEngine.stop()
-        bleEngine.close()
+        bleEngine.设置生命周期监听器(null)
+        bleEngine.停止()
+        bleEngine.关闭()
         super.onDestroy()
     }
 
@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_BLE_PERMS && hasAllPermissions()) {
-            bleEngine.start()
+            bleEngine.启动()
         }
     }
 
@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FeedScreen(
+private fun 帖子流界面(
     postsFlow: Flow<List<PostEntity>>,
     bleStatus: String,
     inputText: String,
