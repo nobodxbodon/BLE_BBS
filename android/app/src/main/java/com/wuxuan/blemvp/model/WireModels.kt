@@ -13,65 +13,65 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-data class Message(
-    val id: UUID = UUID.randomUUID(),
-    val text: String,
-    val senderName: String,
-    val timestampIso8601: String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+data class 帖子(
+    val 编号: UUID = UUID.randomUUID(),
+    val 正文: String,
+    val 发帖人: String,
+    val 时间戳Iso8601: String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
 )
 
 @Serializable
-data class MessagePayload(
-    @SerialName("id") val id: String,
-    @SerialName("text") val text: String,
-    @SerialName("发帖人") val sender: String,
-    @SerialName("时间戳") val timestamp: String
+data class 帖子载荷(
+    @SerialName("id") val 编号: String,
+    @SerialName("text") val 正文: String,
+    @SerialName("发帖人") val 发帖人: String,
+    @SerialName("时间戳") val 时间戳: String
 ) {
     companion object {
-        fun fromMessage(message: Message): MessagePayload = MessagePayload(
-            id = message.id.toString(),
-            text = message.text,
-            sender = message.senderName,
-            timestamp = message.timestampIso8601
+        fun 由帖子生成(帖子: 帖子): 帖子载荷 = 帖子载荷(
+            编号 = 帖子.编号.toString(),
+            正文 = 帖子.正文,
+            发帖人 = 帖子.发帖人,
+            时间戳 = 帖子.时间戳Iso8601
         )
     }
 }
 
-sealed class WirePacket {
-    data class PacketMessage(val payload: MessagePayload) : WirePacket()
-    data class Ack(val ackId: String) : WirePacket()
+sealed class 传输包 {
+    data class 帖子包(val 载荷: 帖子载荷) : 传输包()
+    data class 确认包(val 确认编号: String) : 传输包()
 }
 
-object WireCodec {
+object 传输编解码器 {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun encode(packet: WirePacket): String {
-        val obj: JsonObject = when (packet) {
-            is WirePacket.PacketMessage -> buildJsonObject {
+    fun 编码(传输包: 传输包): String {
+        val obj: JsonObject = when (传输包) {
+            is 传输包.帖子包 -> buildJsonObject {
                 put("kind", JsonPrimitive("message"))
-                put("message", json.encodeToJsonElement(MessagePayload.serializer(), packet.payload))
+                put("message", json.encodeToJsonElement(帖子载荷.serializer(), 传输包.载荷))
             }
 
-            is WirePacket.Ack -> buildJsonObject {
+            is 传输包.确认包 -> buildJsonObject {
                 put("kind", JsonPrimitive("ack"))
-                put("ackID", JsonPrimitive(packet.ackId))
+                put("ackID", JsonPrimitive(传输包.确认编号))
             }
         }
         return json.encodeToString(JsonObject.serializer(), obj)
     }
 
-    fun decode(jsonStr: String): WirePacket? {
+    fun 解码(json文本: String): 传输包? {
         return try {
-            val obj = json.decodeFromString(JsonObject.serializer(), jsonStr)
+            val obj = json.decodeFromString(JsonObject.serializer(), json文本)
             when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
                 "message" -> {
-                    val payload = obj["message"]?.let { json.decodeFromJsonElement(MessagePayload.serializer(), it) }
-                    if (payload != null) WirePacket.PacketMessage(payload) else null
+                    val 载荷 = obj["message"]?.let { json.decodeFromJsonElement(帖子载荷.serializer(), it) }
+                    if (载荷 != null) 传输包.帖子包(载荷) else null
                 }
 
                 "ack" -> {
-                    val ackId = obj["ackID"]?.jsonPrimitive?.contentOrNull
-                    if (ackId != null) WirePacket.Ack(ackId) else null
+                    val 确认编号 = obj["ackID"]?.jsonPrimitive?.contentOrNull
+                    if (确认编号 != null) 传输包.确认包(确认编号) else null
                 }
 
                 else -> null
