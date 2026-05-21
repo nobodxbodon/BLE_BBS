@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="input_placeholder">输入帖文</string>
+    <string name="action_post">发布</string>
+    <string name="toast_copied">已复制</string>
+    <string name="empty_posts">暂无帖文</string>
+</resources>

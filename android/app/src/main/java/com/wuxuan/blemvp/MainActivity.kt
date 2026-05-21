@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -161,6 +162,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private const val SHOW_DEBUG_ROW = false
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun 帖子流界面(
@@ -183,35 +186,37 @@ private fun 帖子流界面(
             .imePadding()
             .padding(16.dp)
     ) {
-        // Debug toggle row
-        var 显示调试信息 by rememberSaveable { mutableStateOf(false) }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (显示调试信息) {
-                Text(
-                    text = 蓝牙状态,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
-            }
-            Text(
-                text = "DBG v0.0.1",
-                style = MaterialTheme.typography.labelSmall,
-                color = if (显示调试信息) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                modifier = Modifier
-                    .combinedClickable(
-                        onClick = { 显示调试信息 = !显示调试信息 },
-                        onLongClick = { 强制同步() }
+        if (SHOW_DEBUG_ROW) {
+            // Debug toggle row. Kept behind a constant switch for development diagnostics.
+            var 显示调试信息 by rememberSaveable { mutableStateOf(false) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (显示调试信息) {
+                    Text(
+                        text = 蓝牙状态,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
-                    .padding(4.dp)
-            )
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+                Text(
+                    text = "DBG v0.0.1",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (显示调试信息) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier
+                        .combinedClickable(
+                            onClick = { 显示调试信息 = !显示调试信息 },
+                            onLongClick = { 强制同步() }
+                        )
+                        .padding(4.dp)
+                )
+            }
         }
         // Post feed — latest on top, right-aligned, full text (no truncation)
         val 列表状态 = rememberLazyListState()
@@ -235,7 +240,7 @@ private fun 帖子流界面(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No posts yet",
+                            text = stringResource(R.string.empty_posts),
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -252,7 +257,11 @@ private fun 帖子流界面(
                                 onClick = {},
                                 onLongClick = {
                                     剪贴板.setText(AnnotatedString(帖子记录.text))
-                                    Toast.makeText(上下文, "Copied", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        上下文,
+                                        上下文.getString(R.string.toast_copied),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                             )
                             .padding(vertical = 4.dp)
@@ -270,7 +279,7 @@ private fun 帖子流界面(
             OutlinedTextField(
                 value = 输入文本,
                 onValueChange = 输入变化,
-                placeholder = { Text("Type a post") },
+                placeholder = { Text(stringResource(R.string.input_placeholder)) },
                 modifier = Modifier.weight(1f),
                 singleLine = false,
                 maxLines = 4
@@ -283,7 +292,7 @@ private fun 帖子流界面(
                 enabled = 输入文本.trim().isNotEmpty(),
                 modifier = Modifier.align(Alignment.CenterVertically)
             ) {
-                Text("Post")
+                Text(stringResource(R.string.action_post))
             }
         }
     }
