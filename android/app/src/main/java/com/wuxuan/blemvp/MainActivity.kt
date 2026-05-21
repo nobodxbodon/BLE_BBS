@@ -42,7 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.wuxuan.blemvp.ble.BleEngine
+import com.wuxuan.blemvp.ble.蓝牙引擎
 import com.wuxuan.blemvp.storage.AppDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -56,10 +56,10 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bleEngine: BleEngine
-    private val bleStatusFlow = MutableStateFlow("BLE: starting…")
+    private lateinit var 蓝牙引擎实例: 蓝牙引擎
+    private val 蓝牙状态流 = MutableStateFlow("BLE: starting…")
 
-    private val requiredPermissions: Array<String>
+    private val 所需权限: Array<String>
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // BLUETOOTH_SCAN is declared with neverForLocation in the manifest,
             // so ACCESS_FINE_LOCATION is not required on Android 12+.
@@ -75,43 +75,43 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        bleEngine = BleEngine(this)
-        bleEngine.setLifecycleListener { state, detail ->
-            bleStatusFlow.value = "[$state] $detail"
+        蓝牙引擎实例 = 蓝牙引擎(this)
+        蓝牙引擎实例.设置生命周期监听器 { state, detail ->
+            蓝牙状态流.value = "[$state] $detail"
         }
         val db = AppDatabase.getInstance(this)
-        requestBlePermissionsIfNeeded()
+        按需请求蓝牙权限()
 
-        val postsFlow = db.postDao().getAllLatestFirstFlow()
+        val 帖文流 = db.postDao().getAllLatestFirstFlow()
 
         // Start BLE immediately if permissions are already granted (e.g. re-launch after first run).
         // On first install, start is deferred to onRequestPermissionsResult.
-        if (hasAllPermissions()) bleEngine.start()
+        if (具备全部权限()) 蓝牙引擎实例.启动()
 
         setContent {
             MaterialTheme {
-                var inputText by remember { mutableStateOf("") }
-                val bleStatus by bleStatusFlow.collectAsState()
-                FeedScreen(
-                    postsFlow = postsFlow,
+                var 输入文本 by remember { mutableStateOf("") }
+                val bleStatus by 蓝牙状态流.collectAsState()
+                帖文列表界面(
+                    帖文流 = 帖文流,
                     bleStatus = bleStatus,
-                    inputText = inputText,
-                    onInputChange = { inputText = it },
-                    onForceSync = { bleEngine.forceSync() },
-                    onPost = {
-                        val msg = inputText.trim()
+                    输入文本 = 输入文本,
+                    输入变化 = { 输入文本 = it },
+                    强制同步 = { 蓝牙引擎实例.强制同步历史() },
+                    发布 = {
+                        val msg = 输入文本.trim()
                         if (msg.isNotEmpty()) {
-                            val (sendCount, encodedBytes) = bleEngine.sendMessageToAllPeers(msg)
+                            val (sendCount, encodedBytes) = 蓝牙引擎实例.发送帖文给所有对端(msg)
                             if (sendCount == 0) {
-                                val snapshot = bleEngine.getPeerSnapshot()
-                                if (snapshot.writableCount > 0) {
+                                val snapshot = 蓝牙引擎实例.获取对等快照()
+                                if (snapshot.可写数 > 0) {
                                     lifecycleScope.launch {
                                         delay(400)
-                                        bleEngine.retrySendToAllPeers(encodedBytes)
+                                        蓝牙引擎实例.重试发送给所有对端(encodedBytes)
                                     }
                                 }
                             }
-                            inputText = ""
+                            输入文本 = ""
                         }
                     }
                 )
@@ -122,13 +122,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Restart scan + advertising every time the user brings the app to the foreground.
-        if (::bleEngine.isInitialized) bleEngine.rearmScan()
+        if (::蓝牙引擎实例.isInitialized) 蓝牙引擎实例.重启扫描广播()
     }
 
     override fun onDestroy() {
-        bleEngine.setLifecycleListener(null)
-        bleEngine.stop()
-        bleEngine.close()
+        蓝牙引擎实例.设置生命周期监听器(null)
+        蓝牙引擎实例.停止()
+        蓝牙引擎实例.关闭()
         super.onDestroy()
     }
 
@@ -138,43 +138,43 @@ class MainActivity : ComponentActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CODE_BLE_PERMS && hasAllPermissions()) {
-            bleEngine.start()
+        if (requestCode == 蓝牙权限请求码 && 具备全部权限()) {
+            蓝牙引擎实例.启动()
         }
     }
 
-    private fun hasAllPermissions() = requiredPermissions.all {
+    private fun 具备全部权限() = 所需权限.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun requestBlePermissionsIfNeeded() {
-        val missing = requiredPermissions.filter {
+    private fun 按需请求蓝牙权限() {
+        val missing = 所需权限.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_BLE_PERMS)
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 蓝牙权限请求码)
         }
     }
 
     companion object {
-        private const val REQUEST_CODE_BLE_PERMS = 1001
+        private const val 蓝牙权限请求码 = 1001
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FeedScreen(
-    postsFlow: Flow<List<PostEntity>>,
+private fun 帖文列表界面(
+    帖文流: Flow<List<PostEntity>>,
     bleStatus: String,
-    inputText: String,
-    onInputChange: (String) -> Unit,
-    onForceSync: () -> Unit,
-    onPost: () -> Unit
+    输入文本: String,
+    输入变化: (String) -> Unit,
+    强制同步: () -> Unit,
+    发布: () -> Unit
 ) {
-    val posts by postsFlow.collectAsState(initial = emptyList())
-    val clipboardManager = LocalClipboardManager.current
+    val 帖文列表 by 帖文流.collectAsState(initial = emptyList())
+    val 剪贴板 = LocalClipboardManager.current
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
+    val 焦点管理器 = LocalFocusManager.current
 
     Column(
         modifier = Modifier
@@ -184,13 +184,13 @@ private fun FeedScreen(
             .padding(16.dp)
     ) {
         // Debug toggle row
-        var showDebug by rememberSaveable { mutableStateOf(false) }
+        var 显示调试 by rememberSaveable { mutableStateOf(false) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (showDebug) {
+            if (显示调试) {
                 Text(
                     text = bleStatus,
                     style = MaterialTheme.typography.labelSmall,
@@ -203,30 +203,30 @@ private fun FeedScreen(
             Text(
                 text = "DBG v0.0.1",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (showDebug) MaterialTheme.colorScheme.primary
+                color = if (显示调试) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 modifier = Modifier
                     .combinedClickable(
-                        onClick = { showDebug = !showDebug },
-                        onLongClick = { onForceSync() }
+                        onClick = { 显示调试 = !显示调试 },
+                        onLongClick = { 强制同步() }
                     )
                     .padding(4.dp)
             )
         }
         // Post feed — latest on top, right-aligned, full text (no truncation)
-        val listState = rememberLazyListState()
-        // Auto-scroll to top whenever the newest post changes (local or received)
-        LaunchedEffect(posts.firstOrNull()?.id) {
-            if (posts.isNotEmpty()) listState.animateScrollToItem(0)
+        val 列表状态 = rememberLazyListState()
+        // Auto-scroll to top whenever the newest 帖文项 changes (local or received)
+        LaunchedEffect(帖文列表.firstOrNull()?.id) {
+            if (帖文列表.isNotEmpty()) 列表状态.animateScrollToItem(0)
         }
         LazyColumn(
-            state = listState,
+            state = 列表状态,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(vertical = 4.dp)
         ) {
-            if (posts.isEmpty()) {
+            if (帖文列表.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -235,15 +235,15 @@ private fun FeedScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "No posts yet",
+                            text = "暂无帖子",
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
                 }
             } else {
-                items(posts, key = { it.id }) { post ->
+                items(帖文列表, key = { it.id }) { 帖文项 ->
                     Text(
-                        text = post.text,
+                        text = 帖文项.text,
                         color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.End,
                         modifier = Modifier
@@ -251,8 +251,8 @@ private fun FeedScreen(
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {
-                                    clipboardManager.setText(AnnotatedString(post.text))
-                                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                    剪贴板.setText(AnnotatedString(帖文项.text))
+                                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
                                 }
                             )
                             .padding(vertical = 4.dp)
@@ -268,22 +268,22 @@ private fun FeedScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
-                placeholder = { Text("Type a post") },
+                value = 输入文本,
+                onValueChange = 输入变化,
+                placeholder = { Text("Type a 帖文项") },
                 modifier = Modifier.weight(1f),
                 singleLine = false,
                 maxLines = 4
             )
             Button(
                 onClick = {
-                    onPost()
-                    focusManager.clearFocus()
+                    发布()
+                    焦点管理器.clearFocus()
                 },
-                enabled = inputText.trim().isNotEmpty(),
+                enabled = 输入文本.trim().isNotEmpty(),
                 modifier = Modifier.align(Alignment.CenterVertically)
             ) {
-                Text("Post")
+                Text("发布")
             }
         }
     }

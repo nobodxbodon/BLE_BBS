@@ -12,32 +12,32 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 
-class BleCentralConnector(
+class 蓝牙中心连接器(
     private val context: Context,
-    private val onConnectionStateChanged: (connected: Boolean, address: String) -> Unit,
-    private val onWriteReady: (address: String) -> Unit = {}
+    private val 连接状态变化: (connected: Boolean, address: String) -> Unit,
+    private val 写入就绪: (address: String) -> Unit = {}
 ) {
-    data class PeerSnapshot(
-        val activeGattCount: Int,
-        val writableCount: Int,
-        val pendingCount: Int
+    data class 对等快照(
+        val 活跃Gatt数: Int,
+        val 可写数: Int,
+        val 待连接数: Int
     )
 
-    fun hasConnectionOrPending(): Boolean {
-        return activeGatts.isNotEmpty() || pendingConnections.isNotEmpty()
+    fun 有连接或待连接(): Boolean {
+        return 活跃Gatt连接.isNotEmpty() || 待连接地址.isNotEmpty()
     }
 
-    fun hasWritablePeer(address: String): Boolean {
-        return writableCharacteristics.containsKey(address)
+    fun 有可写对端(address: String): Boolean {
+        return 可写特征.containsKey(address)
     }
 
     // Write to all connected GATTs
     @SuppressLint("MissingPermission")
-    fun sendToAllConnectedGatt(bytes: ByteArray): Int {
-        val chunks = chunkPayload(bytes)
-        if (writableCharacteristics.isEmpty() && activeGatts.isNotEmpty()) {
-            Log.d(TAG, "No writable characteristic yet, retrying service discovery on ${activeGatts.size} active GATT links")
-            activeGatts.values.forEach { gatt ->
+    fun 发给所有已连接Gatt(bytes: ByteArray): Int {
+        val chunks = 切分载荷(bytes)
+        if (可写特征.isEmpty() && 活跃Gatt连接.isNotEmpty()) {
+            Log.d(TAG, "No writable characteristic yet, retrying service discovery on ${活跃Gatt连接.size} active GATT links")
+            活跃Gatt连接.values.forEach { gatt ->
                 try {
                     gatt.discoverServices()
                 } catch (_: Throwable) {
@@ -46,75 +46,75 @@ class BleCentralConnector(
             }
         }
 
-        Log.d(TAG, "sendToAllConnectedGatt: enqueue ${bytes.size} bytes in ${chunks.size} chunks to ${writableCharacteristics.size} peers")
+        Log.d(TAG, "发给所有已连接Gatt: enqueue ${bytes.size} bytes in ${chunks.size} chunks to ${可写特征.size} peers")
         var queuedPeerCount = 0
-        for ((address, characteristic) in writableCharacteristics) {
-            val gatt = activeGatts[address] ?: continue
-            val writeCharacteristic = resolveWriteCharacteristic(gatt, characteristic)
-            val accepted = enqueueChunksForPeer(address, chunks)
+        for ((address, characteristic) in 可写特征) {
+            val gatt = 活跃Gatt连接[address] ?: continue
+            val 写入特征 = 解析写入特征(gatt, characteristic)
+            val accepted = 为对端排队分片(address, chunks)
             if (!accepted) continue
 
             queuedPeerCount += 1
-            drainPeerQueue(address, gatt, writeCharacteristic)
+            消费对端队列(address, gatt, 写入特征)
         }
-        Log.d(TAG, "sendToAllConnectedGatt completed: queued peers=$queuedPeerCount")
+        Log.d(TAG, "发给所有已连接Gatt completed: queued peers=$queuedPeerCount")
         return queuedPeerCount
     }
 
-    fun getPeerSnapshot(): PeerSnapshot {
-        return PeerSnapshot(
-            activeGattCount = activeGatts.size,
-            writableCount = writableCharacteristics.size,
-            pendingCount = pendingConnections.size
+    fun 获取对等快照(): 对等快照 {
+        return 对等快照(
+            活跃Gatt数 = 活跃Gatt连接.size,
+            可写数 = 可写特征.size,
+            待连接数 = 待连接地址.size
         )
     }
 
     @SuppressLint("MissingPermission")
-    fun sendToPeer(address: String, bytes: ByteArray): Boolean {
-        val gatt = activeGatts[address] ?: return false
-        val characteristic = writableCharacteristics[address] ?: return false
-        val writeCharacteristic = resolveWriteCharacteristic(gatt, characteristic)
+    fun 发给对端(address: String, bytes: ByteArray): Boolean {
+        val gatt = 活跃Gatt连接[address] ?: return false
+        val characteristic = 可写特征[address] ?: return false
+        val 写入特征 = 解析写入特征(gatt, characteristic)
 
-        val chunks = chunkPayload(bytes)
-        val accepted = enqueueChunksForPeer(address, chunks)
+        val chunks = 切分载荷(bytes)
+        val accepted = 为对端排队分片(address, chunks)
         if (!accepted) return false
 
-        drainPeerQueue(address, gatt, writeCharacteristic)
+        消费对端队列(address, gatt, 写入特征)
         return true
     }
 
-    fun firstWritablePeerAddress(): String? {
-        return writableCharacteristics.keys.firstOrNull()
+    fun 首个可写对端地址(): String? {
+        return 可写特征.keys.firstOrNull()
     }
 
-    fun getWritablePeerAddresses(): List<String> {
-        return writableCharacteristics.keys.toList()
+    fun 获取可写对端地址(): List<String> {
+        return 可写特征.keys.toList()
     }
 
-    private val activeGatts = mutableMapOf<String, BluetoothGatt>()
-    private val writableCharacteristics = mutableMapOf<String, BluetoothGattCharacteristic>()
-    private val pendingConnections = mutableSetOf<String>()
-    private val outboundQueues = mutableMapOf<String, ArrayDeque<ByteArray>>()
-    private val inFlightWrites = mutableSetOf<String>()
-    private val inFlightChunks = mutableMapOf<String, ByteArray>()
-    private val inFlightRetryCounts = mutableMapOf<String, Int>()
-    private val handler = Handler(Looper.getMainLooper())
-    private val writeTimeouts = mutableMapOf<String, Runnable>()
+    private val 活跃Gatt连接 = mutableMapOf<String, BluetoothGatt>()
+    private val 可写特征 = mutableMapOf<String, BluetoothGattCharacteristic>()
+    private val 待连接地址 = mutableSetOf<String>()
+    private val 出站队列 = mutableMapOf<String, ArrayDeque<ByteArray>>()
+    private val 进行中写入 = mutableSetOf<String>()
+    private val 进行中分片 = mutableMapOf<String, ByteArray>()
+    private val 进行中重试次数 = mutableMapOf<String, Int>()
+    private val 主线程处理器 = Handler(Looper.getMainLooper())
+    private val 写入超时任务 = mutableMapOf<String, Runnable>()
 
-    private val gattCallback = object : BluetoothGattCallback() {
+    private val Gatt回调 = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val address = gatt.device.address
-            pendingConnections.remove(address)
+            待连接地址.remove(address)
 
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
-                    activeGatts[address] = gatt
+                    活跃Gatt连接[address] = gatt
                     Log.d(TAG, "Connected as central: $address")
-                    onConnectionStateChanged(true, address)
+                    连接状态变化(true, address)
                     // Delay before service discovery to avoid GATT_ERROR 133 on Android.
-                    handler.postDelayed({
-                        if (activeGatts.containsKey(address)) {
+                    主线程处理器.postDelayed({
+                        if (活跃Gatt连接.containsKey(address)) {
                             gatt.discoverServices()
                         }
                     }, DISCOVER_DELAY_MS)
@@ -122,14 +122,14 @@ class BleCentralConnector(
 
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d(TAG, "Disconnected as central: $address (status=$status)")
-                    cancelWriteTimeout(address)
-                    activeGatts.remove(address)
-                    writableCharacteristics.remove(address)
-                    outboundQueues.remove(address)
-                    inFlightWrites.remove(address)
-                    inFlightChunks.remove(address)
-                    inFlightRetryCounts.remove(address)
-                    onConnectionStateChanged(false, address)
+                    取消写入超时(address)
+                    活跃Gatt连接.remove(address)
+                    可写特征.remove(address)
+                    出站队列.remove(address)
+                    进行中写入.remove(address)
+                    进行中分片.remove(address)
+                    进行中重试次数.remove(address)
+                    连接状态变化(false, address)
                     gatt.close()
                 }
             }
@@ -141,44 +141,44 @@ class BleCentralConnector(
             status: Int
         ) {
             val address = gatt.device.address
-            if (!inFlightWrites.contains(address)) return
-            cancelWriteTimeout(address)
+            if (!进行中写入.contains(address)) return
+            取消写入超时(address)
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                inFlightWrites.remove(address)
-                inFlightChunks.remove(address)
-                inFlightRetryCounts.remove(address)
+                进行中写入.remove(address)
+                进行中分片.remove(address)
+                进行中重试次数.remove(address)
 
-                val nextCharacteristic = writableCharacteristics[address]?.let { resolveWriteCharacteristic(gatt, it) }
+                val nextCharacteristic = 可写特征[address]?.let { 解析写入特征(gatt, it) }
                 if (nextCharacteristic != null) {
-                    drainPeerQueue(address, gatt, nextCharacteristic)
+                    消费对端队列(address, gatt, nextCharacteristic)
                 }
                 return
             }
 
-            val chunk = inFlightChunks[address]
-            val retries = inFlightRetryCounts[address] ?: 0
+            val chunk = 进行中分片[address]
+            val retries = 进行中重试次数[address] ?: 0
             if (chunk != null && retries < MAX_WRITE_RETRIES) {
-                val writeCharacteristic = writableCharacteristics[address]?.let { resolveWriteCharacteristic(gatt, it) }
-                if (writeCharacteristic != null && writeChunk(gatt, writeCharacteristic, chunk)) {
-                    inFlightRetryCounts[address] = retries + 1
+                val 写入特征 = 可写特征[address]?.let { 解析写入特征(gatt, it) }
+                if (写入特征 != null && 写入分片(gatt, 写入特征, chunk)) {
+                    进行中重试次数[address] = retries + 1
                     Log.w(TAG, "write retry ${retries + 1}/$MAX_WRITE_RETRIES for $address")
                     return
                 }
             }
 
             if (chunk != null) {
-                outboundQueues.getOrPut(address) { ArrayDeque() }.addFirst(chunk)
+                出站队列.getOrPut(address) { ArrayDeque() }.addFirst(chunk)
             }
-            inFlightWrites.remove(address)
-            inFlightChunks.remove(address)
-            inFlightRetryCounts.remove(address)
+            进行中写入.remove(address)
+            进行中分片.remove(address)
+            进行中重试次数.remove(address)
             try {
                 gatt.discoverServices()
             } catch (_: Throwable) {
                 // Ignore discovery retry failures.
             }
-            Log.w(TAG, "write callback failed for $address status=$status")
+            Log.w(TAG, "write 回调 failed for $address status=$status")
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
@@ -189,13 +189,13 @@ class BleCentralConnector(
                 return
             }
 
-            val service = gatt.getService(BleConstants.SERVICE_UUID)
+            val service = gatt.getService(蓝牙常量.服务UUID)
             Log.d(TAG, "getService returned: ${if (service != null) "found" else "null"}")
-            val characteristic = service?.getCharacteristic(BleConstants.WRITE_UUID)
-            Log.d(TAG, "getCharacteristic(WRITE_UUID) returned: ${if (characteristic != null) "found" else "null"}")
+            val characteristic = service?.getCharacteristic(蓝牙常量.写入UUID)
+            Log.d(TAG, "getCharacteristic(写入UUID) returned: ${if (characteristic != null) "found" else "null"}")
             if (characteristic != null) {
-                writableCharacteristics[address] = characteristic
-                onWriteReady(address)
+                可写特征[address] = characteristic
+                写入就绪(address)
                 Log.d(TAG, "Write characteristic ready for $address")
             } else {
                 Log.w(TAG, "Write characteristic NOT found for $address")
@@ -204,37 +204,37 @@ class BleCentralConnector(
     }
 
     @SuppressLint("MissingPermission")
-    fun connect(device: BluetoothDevice) {
+    fun 连接(device: BluetoothDevice) {
         val address = device.address
-        if (activeGatts.containsKey(address) || pendingConnections.contains(address)) {
+        if (活跃Gatt连接.containsKey(address) || 待连接地址.contains(address)) {
             return
         }
 
-        pendingConnections.add(address)
+        待连接地址.add(address)
         val gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            device.connectGatt(context, false, Gatt回调, BluetoothDevice.TRANSPORT_LE)
         } else {
-            device.connectGatt(context, false, gattCallback)
+            device.connectGatt(context, false, Gatt回调)
         }
 
         if (gatt == null) {
-            pendingConnections.remove(address)
+            待连接地址.remove(address)
             Log.e(TAG, "connectGatt returned null for $address")
         }
     }
 
     @SuppressLint("MissingPermission")
-    fun disconnectAll() {
-        pendingConnections.clear()
-        writeTimeouts.values.forEach { handler.removeCallbacks(it) }
-        writeTimeouts.clear()
-        val snapshot = activeGatts.values.toList()
-        activeGatts.clear()
-        writableCharacteristics.clear()
-        outboundQueues.clear()
-        inFlightWrites.clear()
-        inFlightChunks.clear()
-        inFlightRetryCounts.clear()
+    fun 断开全部() {
+        待连接地址.clear()
+        写入超时任务.values.forEach { 主线程处理器.removeCallbacks(it) }
+        写入超时任务.clear()
+        val snapshot = 活跃Gatt连接.values.toList()
+        活跃Gatt连接.clear()
+        可写特征.clear()
+        出站队列.clear()
+        进行中写入.clear()
+        进行中分片.clear()
+        进行中重试次数.clear()
 
         snapshot.forEach { gatt ->
             try {
@@ -247,7 +247,7 @@ class BleCentralConnector(
     }
 
     @SuppressLint("MissingPermission")
-    private fun writeChunk(
+    private fun 写入分片(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
         chunk: ByteArray
@@ -269,9 +269,9 @@ class BleCentralConnector(
         return gatt.writeCharacteristic(characteristic)
     }
 
-    private fun enqueueChunksForPeer(address: String, chunks: List<ByteArray>): Boolean {
+    private fun 为对端排队分片(address: String, chunks: List<ByteArray>): Boolean {
         if (chunks.isEmpty()) return false
-        val queue = outboundQueues.getOrPut(address) { ArrayDeque() }
+        val queue = 出站队列.getOrPut(address) { ArrayDeque() }
         for (chunk in chunks) {
             if (queue.size >= MAX_PENDING_CHUNKS_PER_PEER) {
                 queue.removeFirstOrNull()
@@ -282,70 +282,70 @@ class BleCentralConnector(
     }
 
     @SuppressLint("MissingPermission")
-    private fun drainPeerQueue(
+    private fun 消费对端队列(
         address: String,
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
-        if (inFlightWrites.contains(address)) return
+        if (进行中写入.contains(address)) return
 
-        val queue = outboundQueues[address] ?: return
+        val queue = 出站队列[address] ?: return
         val nextChunk = queue.removeFirstOrNull() ?: return
-        val started = writeChunk(gatt, characteristic, nextChunk)
+        val started = 写入分片(gatt, characteristic, nextChunk)
         if (!started) {
             queue.addFirst(nextChunk)
             Log.w(TAG, "Failed to start queued write for $address")
             return
         }
 
-        inFlightWrites.add(address)
-        inFlightChunks[address] = nextChunk
-        inFlightRetryCounts[address] = 0
-        scheduleWriteTimeout(address, gatt)
+        进行中写入.add(address)
+        进行中分片[address] = nextChunk
+        进行中重试次数[address] = 0
+        安排写入超时(address, gatt)
     }
 
-    private fun scheduleWriteTimeout(address: String, gatt: BluetoothGatt) {
-        cancelWriteTimeout(address)
+    private fun 安排写入超时(address: String, gatt: BluetoothGatt) {
+        取消写入超时(address)
         val runnable = Runnable {
             Log.w(TAG, "Write timeout for $address — closing zombie GATT")
-            activeGatts.remove(address)
-            writableCharacteristics.remove(address)
-            outboundQueues.remove(address)
-            inFlightWrites.remove(address)
-            inFlightChunks.remove(address)
-            inFlightRetryCounts.remove(address)
+            活跃Gatt连接.remove(address)
+            可写特征.remove(address)
+            出站队列.remove(address)
+            进行中写入.remove(address)
+            进行中分片.remove(address)
+            进行中重试次数.remove(address)
             try { gatt.disconnect(); gatt.close() } catch (_: Throwable) {}
-            onConnectionStateChanged(false, address)
+            连接状态变化(false, address)
         }
-        writeTimeouts[address] = runnable
-        handler.postDelayed(runnable, WRITE_TIMEOUT_MS)
+        写入超时任务[address] = runnable
+        主线程处理器.postDelayed(runnable, WRITE_TIMEOUT_MS)
     }
 
-    private fun cancelWriteTimeout(address: String) {
-        writeTimeouts.remove(address)?.let { handler.removeCallbacks(it) }
+    private fun 取消写入超时(address: String) {
+        写入超时任务.remove(address)?.let { 主线程处理器.removeCallbacks(it) }
     }
 
-    private fun resolveWriteCharacteristic(
+    private fun 解析写入特征(
         gatt: BluetoothGatt,
         cachedCharacteristic: BluetoothGattCharacteristic
     ): BluetoothGattCharacteristic {
         val fresh = gatt
-            .getService(BleConstants.SERVICE_UUID)
-            ?.getCharacteristic(BleConstants.WRITE_UUID)
+            .getService(蓝牙常量.服务UUID)
+            ?.getCharacteristic(蓝牙常量.写入UUID)
         if (fresh != null) {
-            writableCharacteristics[gatt.device.address] = fresh
+            可写特征[gatt.device.address] = fresh
             return fresh
         }
         return cachedCharacteristic
     }
 
-    private fun chunkPayload(bytes: ByteArray): List<ByteArray> {
+    private fun 切分载荷(bytes: ByteArray): List<ByteArray> {
         if (bytes.isEmpty()) return emptyList()
         return bytes.asList().chunked(MAX_CHUNK_BYTES).map { it.toByteArray() }
     }
 
     companion object {
-        private const val TAG = "BleCentralConnector"
+        private const val TAG = "蓝牙中心连接器"
         private const val MAX_CHUNK_BYTES = 20
         private const val MAX_PENDING_CHUNKS_PER_PEER = 120
         private const val MAX_WRITE_RETRIES = 2
