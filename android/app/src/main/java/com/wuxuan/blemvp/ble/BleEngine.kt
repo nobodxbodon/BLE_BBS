@@ -25,19 +25,19 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.io.ByteArrayOutputStream
 
-class 蓝牙引擎(context: Context) {
+class 蓝牙引擎(上下文: Context) {
 
-    private val appContext = context.applicationContext
-    private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
-    private val adapter = bluetoothManager?.adapter
-    private val storageScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val postDao = AppDatabase.getInstance(appContext).postDao()
+    private val 应用上下文 = 上下文.applicationContext
+    private val 蓝牙管理器 = 上下文.getSystemService(BluetoothManager::class.java)
+    private val 蓝牙适配器 = 蓝牙管理器?.adapter
+    private val 存储协程域 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val 帖子访问对象 = AppDatabase.getInstance(应用上下文).postDao()
     private val 已知帖子编号: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
 
     private val 本机设备编号: String = run {
-        val prefs = appContext.getSharedPreferences("blemvp_prefs", Context.MODE_PRIVATE)
-        prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString("device_id", it).apply()
+        val 偏好设置 = 应用上下文.getSharedPreferences("blemvp_prefs", Context.MODE_PRIVATE)
+        偏好设置.getString("device_id", null) ?: UUID.randomUUID().toString().also {
+            偏好设置.edit().putString("device_id", it).apply()
         }
     }
 
@@ -47,16 +47,16 @@ class 蓝牙引擎(context: Context) {
     private val 入站字节缓冲区 = mutableMapOf<String, ByteArrayOutputStream>()
 
     private val 蓝牙状态接收器 = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
-            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-            when (state) {
+        override fun onReceive(上下文: Context, 意图: Intent) {
+            if (意图.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val 状态 = 意图.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+            when (状态) {
                 BluetoothAdapter.STATE_OFF -> {
                     // BT is going off — null the GATT-server reference now so 启动() works
                     // cleanly when BT comes back on. Connections are dead; clean up maps.
                     中心连接器.断开全部()
                     gatt服务端.停止()
-                    emitState(蓝牙生命周期状态.错误, "Bluetooth turned off on this device")
+                    发出状态(蓝牙生命周期状态.错误, "Bluetooth turned off on this device")
                 }
                 BluetoothAdapter.STATE_ON -> {
                     if (蓝牙已启动) {
@@ -66,123 +66,123 @@ class 蓝牙引擎(context: Context) {
                         gatt服务端.启动()
                         扫描器?.开始扫描()
                         广播器?.开始广播()
-                        emitState(蓝牙生命周期状态.运行中, "Bluetooth re-enabled, BLE restarted")
+                        发出状态(蓝牙生命周期状态.运行中, "Bluetooth re-enabled, BLE restarted")
                     }
                 }
             }
         }
     }
 
-    private val 中心连接器: 蓝牙中心连接器 = 蓝牙中心连接器(context,
+    private val 中心连接器: 蓝牙中心连接器 = 蓝牙中心连接器(上下文,
         on连接状态变化 = { connected, address ->
         if (connected) {
-            emitState(蓝牙生命周期状态.已连接, "Central connected: $address")
+            发出状态(蓝牙生命周期状态.已连接, "Central connected: $address")
         } else {
             // Forget immediately so the peer is rediscoverable as soon as it comes back
             // online (e.g. after a Bluetooth restart). Reconnect hammering is prevented
-            // by the delay in the onDiscovered → 连接 path below.
+            // by the delay in the on发现设备 → 连接 path below.
             扫描器?.忘记地址(address)
-            emitState(蓝牙生命周期状态.运行中, "Central disconnected: $address")
+            发出状态(蓝牙生命周期状态.运行中, "Central disconnected: $address")
         }
         },
-        onWriteReady = { address ->
-            emitState(蓝牙生命周期状态.运行中, "Central write ready: $address")
-            syncHistoryToPeer(address)
+        on可写就绪 = { address ->
+            发出状态(蓝牙生命周期状态.运行中, "Central write ready: $address")
+            同步历史给邻机(address)
         }
     )
 
     private val gatt服务端 = 蓝牙Gatt服务端(
-        context = context,
-        onWriteArrived = { fromAddress, byteCount ->
-            emitState(蓝牙生命周期状态.运行中, "Write arrived: $byteCount bytes from $fromAddress")
+        上下文 = 上下文,
+        on写入到达 = { 来源地址, 字节数 ->
+            发出状态(蓝牙生命周期状态.运行中, "Write arrived: $字节数 bytes from $来源地址")
         },
-        onInboundWrite = { data, fromAddress ->
-            Log.d(TAG, "rx ${data.size}b from $fromAddress")
-            val buffer = 入站字节缓冲区.getOrPut(fromAddress) { ByteArrayOutputStream() }
+        on入站写入 = { data, 来源地址 ->
+            Log.d(日志标记, "rx ${data.size}b from $来源地址")
+            val buffer = 入站字节缓冲区.getOrPut(来源地址) { ByteArrayOutputStream() }
             buffer.write(data)
 
             // Accumulate raw bytes and scan for newline (0x0A) byte.
             // Only 解码 to UTF-8 after a complete frame is found so that
             // multi-byte characters (e.g. Chinese) split across chunk boundaries
             // are reassembled before decoding.
-            val bufBytes = buffer.toByteArray()
-            var consumed = 0
-            while (consumed < bufBytes.size) {
-                var nlIdx = -1
-                for (i in consumed until bufBytes.size) {
-                    if (bufBytes[i] == 0x0A.toByte()) { nlIdx = i; break }
+            val 缓冲字节 = buffer.toByteArray()
+            var 已消费 = 0
+            while (已消费 < 缓冲字节.size) {
+                var 换行位置 = -1
+                for (i in 已消费 until 缓冲字节.size) {
+                    if (缓冲字节[i] == 0x0A.toByte()) { 换行位置 = i; break }
                 }
-                if (nlIdx < 0) break
+                if (换行位置 < 0) break
 
-                val frame = String(bufBytes, consumed, nlIdx - consumed, Charsets.UTF_8).trim()
-                consumed = nlIdx + 1
+                val frame = String(缓冲字节, 已消费, 换行位置 - 已消费, Charsets.UTF_8).trim()
+                已消费 = 换行位置 + 1
                 if (frame.isBlank()) continue
 
-                Log.d(TAG, "parsing frame (${nlIdx - (consumed - 1)} bytes)")
+                Log.d(日志标记, "parsing frame (${换行位置 - (已消费 - 1)} bytes)")
                 val 收到包 = 传输编解码器.解码(frame)
                 if (收到包 is 传输包.帖子包) {
-                    Log.d(TAG, "decoded message: '${收到包.载荷.正文}'")
-                    if (persistPayload(收到包.载荷, "recv:$fromAddress")) {
-                        emitState(蓝牙生命周期状态.运行中, "RECV from $fromAddress: ${收到包.载荷.正文}")
+                    Log.d(日志标记, "decoded message: '${收到包.载荷.正文}'")
+                    if (保存载荷(收到包.载荷, "recv:$来源地址")) {
+                        发出状态(蓝牙生命周期状态.运行中, "RECV from $来源地址: ${收到包.载荷.正文}")
                     }
                 } else {
-                    Log.d(TAG, "解码 returned null or non-message 传输包")
+                    Log.d(日志标记, "解码 returned null or non-message 传输包")
                 }
             }
 
             // Keep unprocessed remainder in the buffer.
             buffer.reset()
-            if (consumed < bufBytes.size) {
-                buffer.write(bufBytes, consumed, bufBytes.size - consumed)
+            if (已消费 < 缓冲字节.size) {
+                buffer.write(缓冲字节, 已消费, 缓冲字节.size - 已消费)
             }
 
             // Compat: try single-传输包 解码 on remainder (no trailing newline).
-            val remaining = buffer.toByteArray()
-            if (remaining.isNotEmpty()) {
-                val snapshot = String(remaining, Charsets.UTF_8).trim()
-                val 收到包 = 传输编解码器.解码(snapshot)
+            val 剩余字节 = buffer.toByteArray()
+            if (剩余字节.isNotEmpty()) {
+                val 快照 = String(剩余字节, Charsets.UTF_8).trim()
+                val 收到包 = 传输编解码器.解码(快照)
                 if (收到包 is 传输包.帖子包) {
-                    Log.d(TAG, "compat 解码 succeeded: '${收到包.载荷.正文}'")
-                    if (persistPayload(收到包.载荷, "recv-compat:$fromAddress")) {
-                        emitState(蓝牙生命周期状态.运行中, "RECV from $fromAddress: ${收到包.载荷.正文}")
+                    Log.d(日志标记, "compat 解码 succeeded: '${收到包.载荷.正文}'")
+                    if (保存载荷(收到包.载荷, "recv-compat:$来源地址")) {
+                        发出状态(蓝牙生命周期状态.运行中, "RECV from $来源地址: ${收到包.载荷.正文}")
                     }
                     buffer.reset()
                 }
             }
 
-            if (buffer.size() > MAX_BUFFER_CHARS) {
+            if (buffer.size() > 最大缓冲字符数) {
                 buffer.reset()
-                emitState(蓝牙生命周期状态.错误, "inbound buffer overflow from $fromAddress")
+                发出状态(蓝牙生命周期状态.错误, "inbound buffer overflow from $来源地址")
             }
         },
         on连接状态变化 = { connected, address ->
             if (connected) {
-                emitState(蓝牙生命周期状态.已连接, "Peripheral connected: $address")
+                发出状态(蓝牙生命周期状态.已连接, "Peripheral connected: $address")
             } else {
                 入站字节缓冲区.remove(address)
-                emitState(蓝牙生命周期状态.运行中, "Peripheral disconnected: $address")
+                发出状态(蓝牙生命周期状态.运行中, "Peripheral disconnected: $address")
             }
         }
     )
     fun 发送帖子给所有邻机(text: String): Pair<Int, ByteArray> {
-        val snapshotBefore = 中心连接器.获取邻机快照()
-        emitState(
+        val 发送前快照 = 中心连接器.获取邻机快照()
+        发出状态(
             蓝牙生命周期状态.运行中,
-            "send precheck: active=${snapshotBefore.活跃Gatt数}, writable=${snapshotBefore.可写邻机数}, pending=${snapshotBefore.待连接数}"
+            "send precheck: active=${发送前快照.活跃Gatt数}, writable=${发送前快照.可写邻机数}, pending=${发送前快照.待连接数}"
         )
 
-        val msg = 帖子(正文 = text, 发帖人 = 本机设备编号)
-        val 待发包 = 传输包.帖子包(帖子载荷.由帖子生成(msg))
-        persistPayload(待发包.载荷, "send-local")
+        val 待发正文 = 帖子(正文 = text, 发帖人 = 本机设备编号)
+        val 待发包 = 传输包.帖子包(帖子载荷.由帖子生成(待发正文))
+        保存载荷(待发包.载荷, "send-local")
         val framed = 传输编解码器.编码(待发包) + "\n"
         val bytes = framed.toByteArray(Charsets.UTF_8)
-        Log.d(TAG, "sending '${text}' -> encoded: '$framed' -> ${bytes.size} bytes")
+        Log.d(日志标记, "sending '${text}' -> encoded: '$framed' -> ${bytes.size} bytes")
         val count = 中心连接器.发送给所有已连接Gatt(bytes)
-        Log.d(TAG, "发送给所有已连接Gatt returned count=$count")
-        val snapshotAfter = 中心连接器.获取邻机快照()
-        emitState(
+        Log.d(日志标记, "发送给所有已连接Gatt returned count=$count")
+        val 发送后快照 = 中心连接器.获取邻机快照()
+        发出状态(
             蓝牙生命周期状态.运行中,
-            "sent count=$count (active=${snapshotAfter.活跃Gatt数}, writable=${snapshotAfter.可写邻机数}, pending=${snapshotAfter.待连接数})"
+            "sent count=$count (active=${发送后快照.活跃Gatt数}, writable=${发送后快照.可写邻机数}, pending=${发送后快照.待连接数})"
         )
         return Pair(count, bytes)
     }
@@ -199,58 +199,58 @@ class 蓝牙引擎(context: Context) {
     /** Push our full local history to every currently-writable peer. Call this manually
      *  if a peer came back into range but the automatic on-连接 sync didn't deliver. */
     fun 强制同步() {
-        val addresses = 中心连接器.取可写邻机地址()
-        Log.d(TAG, "强制同步: pushing history to ${addresses.size} peer(s)")
-        addresses.forEach { syncHistoryToPeer(it) }
+        val 地址列表 = 中心连接器.取可写邻机地址()
+        Log.d(日志标记, "强制同步: pushing history to ${地址列表.size} peer(s)")
+        地址列表.forEach { 同步历史给邻机(it) }
     }
 
     fun 获取本机设备编号(): String = 本机设备编号
 
     fun 获取本机设备地址(): String {
         return try {
-            adapter?.address ?: "Unavailable"
+            蓝牙适配器?.address ?: "Unavailable"
         } catch (_: SecurityException) {
             "Unavailable"
         }
     }
 
-    private val 扫描器: 蓝牙扫描器? = adapter?.let {
+    private val 扫描器: 蓝牙扫描器? = 蓝牙适配器?.let {
         蓝牙扫描器(
-            bluetoothAdapter = it,
-            onDiscovered = { device ->
-                emitState(蓝牙生命周期状态.连接中, "Discovered ${device.address}, connecting")
+            蓝牙适配器 = it,
+            on发现设备 = { device ->
+                发出状态(蓝牙生命周期状态.连接中, "Discovered ${device.address}, connecting")
                 // Delay on IO then hop to Main for the GATT 连接 call. All 蓝牙中心连接器
-                // state (activeGatts, pendingConnections) is accessed from the main thread only.
-                storageScope.launch {
-                    delay(RECONNECT_DELAY_MS)
+                // state (活跃Gatt表, 待连接地址) is accessed from the main thread only.
+                存储协程域.launch {
+                    delay(重连延迟毫秒)
                     withContext(Dispatchers.Main) {
                         中心连接器.连接(device)
                     }
                 }
             },
-            onScanStarted = { mode ->
-                emitState(蓝牙生命周期状态.运行中, "scan started ($mode)")
+            on扫描已启动 = { mode ->
+                发出状态(蓝牙生命周期状态.运行中, "scan started ($mode)")
             },
-            onScanError = { reason ->
-                emitState(蓝牙生命周期状态.错误, reason)
+            on扫描错误 = { reason ->
+                发出状态(蓝牙生命周期状态.错误, reason)
                 // Auto-retry scan after a short pause. This handles transient hardware
                 if (蓝牙已启动) {
-                    storageScope.launch {
-                        delay(SCAN_ERROR_RETRY_MS)
+                    存储协程域.launch {
+                        delay(扫描错误重试毫秒)
                         if (蓝牙已启动) 扫描器?.开始扫描()
                     }
                 }
             }
         )
     }
-    private val 广播器 = adapter?.let {
+    private val 广播器 = 蓝牙适配器?.let {
         蓝牙广播器(
-            bluetoothAdapter = it,
-            onAdvertiseStarted = {
-                emitState(蓝牙生命周期状态.运行中, "advertising started")
+            蓝牙适配器 = it,
+            on广播已启动 = {
+                发出状态(蓝牙生命周期状态.运行中, "advertising started")
             },
-            onAdvertiseError = { reason ->
-                emitState(蓝牙生命周期状态.错误, reason)
+            on广播错误 = { reason ->
+                发出状态(蓝牙生命周期状态.错误, reason)
             }
         )
     }
@@ -258,38 +258,38 @@ class 蓝牙引擎(context: Context) {
     fun 启动() {
         if (蓝牙已启动) return  // idempotent — ignore if already running
 
-        if (adapter == null || !adapter.isEnabled) {
-            Log.e(TAG, "Bluetooth adapter unavailable or disabled")
-            emitState(蓝牙生命周期状态.错误, "Bluetooth unavailable or disabled")
+        if (蓝牙适配器 == null || !蓝牙适配器.isEnabled) {
+            Log.e(日志标记, "Bluetooth 蓝牙适配器 unavailable or disabled")
+            发出状态(蓝牙生命周期状态.错误, "Bluetooth unavailable or disabled")
             return
         }
 
-        appContext.registerReceiver(蓝牙状态接收器, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        应用上下文.registerReceiver(蓝牙状态接收器, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
         gatt服务端.启动()
         扫描器?.开始扫描()
         广播器?.开始广播()
         // Periodic restart
-        扫描重启任务 = storageScope.launch {
+        扫描重启任务 = 存储协程域.launch {
             while (true) {
-                delay(SCAN_RESTART_INTERVAL_MS)
+                delay(扫描重启间隔毫秒)
                 if (!蓝牙已启动) break
-                Log.d(TAG, "periodic scan+advertise restart")
+                Log.d(日志标记, "periodic scan+advertise restart")
                 扫描器?.开始扫描()
                 广播器?.开始广播()
             }
         }
-        storageScope.launch {
+        存储协程域.launch {
             try {
-                val all = postDao.getAllLatestFirst()
+                val all = 帖子访问对象.getAllLatestFirst()
                 已知帖子编号.clear()
                 已知帖子编号.addAll(all.map { it.id })
-                emitState(蓝牙生命周期状态.运行中, "store ready: cached posts=${all.size}")
+                发出状态(蓝牙生命周期状态.运行中, "store ready: cached posts=${all.size}")
             } catch (t: Throwable) {
-                Log.e(TAG, "Failed to read cached posts", t)
-                emitState(蓝牙生命周期状态.错误, "store read failed: ${t.message ?: "unknown"}")
+                Log.e(日志标记, "Failed to read cached posts", t)
+                发出状态(蓝牙生命周期状态.错误, "store read failed: ${t.message ?: "unknown"}")
             }
         }
-        emitState(蓝牙生命周期状态.运行中, "ble up")
+        发出状态(蓝牙生命周期状态.运行中, "ble up")
         蓝牙已启动 = true
     }
 
@@ -297,12 +297,12 @@ class 蓝牙引擎(context: Context) {
         蓝牙已启动 = false
         扫描重启任务?.cancel()
         扫描重启任务 = null
-        try { appContext.unregisterReceiver(蓝牙状态接收器) } catch (_: IllegalArgumentException) { }
+        try { 应用上下文.unregisterReceiver(蓝牙状态接收器) } catch (_: IllegalArgumentException) { }
         扫描器?.停止扫描()
         广播器?.停止广播()
         中心连接器.断开全部()
         gatt服务端.停止()
-        emitState(蓝牙生命周期状态.已停止, "")
+        发出状态(蓝牙生命周期状态.已停止, "")
     }
 
     /**
@@ -310,7 +310,7 @@ class 蓝牙引擎(context: Context) {
      */
     fun 重启扫描() {
         if (!蓝牙已启动) return
-        Log.d(TAG, "重启扫描: restarting scan + advertising")
+        Log.d(日志标记, "重启扫描: restarting scan + advertising")
         扫描器?.开始扫描()
         广播器?.开始广播()
     }
@@ -320,22 +320,22 @@ class 蓝牙引擎(context: Context) {
     }
 
     fun 关闭() {
-        storageScope.cancel()
+        存储协程域.cancel()
     }
 
-    private fun emitState(state: 蓝牙生命周期状态, detail: String) {
-        Log.d(TAG, "state=$state detail=$detail")
+    private fun 发出状态(state: 蓝牙生命周期状态, detail: String) {
+        Log.d(日志标记, "state=$state detail=$detail")
         生命周期监听器?.状态变化(state, detail)
     }
 
-    private fun persistPayload(载荷: 帖子载荷, source: String): Boolean {
+    private fun 保存载荷(载荷: 帖子载荷, source: String): Boolean {
         if (!已知帖子编号.add(载荷.编号)) {
-            Log.d(TAG, "dedup: skip known id=${载荷.编号} source=$source")
+            Log.d(日志标记, "dedup: skip known id=${载荷.编号} source=$source")
             return false
         }
-        storageScope.launch {
+        存储协程域.launch {
             try {
-                postDao.upsert(
+                帖子访问对象.upsert(
                     PostEntity(
                         id = 载荷.编号,
                         text = 载荷.正文,
@@ -343,31 +343,31 @@ class 蓝牙引擎(context: Context) {
                         timestampIso8601 = 载荷.时间戳
                     )
                 )
-                Log.d(TAG, "Persisted message ${载荷.编号} source=$source")
+                Log.d(日志标记, "Persisted message ${载荷.编号} source=$source")
             } catch (t: Throwable) {
-                Log.e(TAG, "Persist failed source=$source", t)
-                emitState(蓝牙生命周期状态.错误, "store write failed: ${t.message ?: "unknown"}")
+                Log.e(日志标记, "Persist failed source=$source", t)
+                发出状态(蓝牙生命周期状态.错误, "store write failed: ${t.message ?: "unknown"}")
             }
         }
         return true
     }
 
-    private fun syncHistoryToPeer(address: String) {
-        storageScope.launch {
+    private fun 同步历史给邻机(address: String) {
+        存储协程域.launch {
             val posts = try {
-                postDao.getAllLatestFirst().asReversed() // oldest first → chronological delivery
+                帖子访问对象.getAllLatestFirst().asReversed() // oldest first → chronological delivery
             } catch (t: Throwable) {
-                Log.e(TAG, "syncHistoryToPeer: failed to load posts", t)
+                Log.e(日志标记, "同步历史给邻机: failed to load posts", t)
                 return@launch
             }
-            Log.d(TAG, "syncHistoryToPeer $address: ${posts.size} posts")
+            Log.d(日志标记, "同步历史给邻机 $address: ${posts.size} posts")
             withContext(Dispatchers.Main) {
-                for (post in posts) {
+                for (帖子记录 in posts) {
                     val 载荷 = 帖子载荷(
-                        编号 = post.id,
-                        正文 = post.text,
-                        发帖人 = post.sender,
-                        时间戳 = post.timestampIso8601
+                        编号 = 帖子记录.id,
+                        正文 = 帖子记录.text,
+                        发帖人 = 帖子记录.sender,
+                        时间戳 = 帖子记录.timestampIso8601
                     )
                     val 待发包 = 传输包.帖子包(载荷)
                     val framed = 传输编解码器.编码(待发包) + "\n"
@@ -379,10 +379,10 @@ class 蓝牙引擎(context: Context) {
     }
 
     companion object {
-        private const val TAG = "蓝牙引擎"
-        private const val MAX_BUFFER_CHARS = 8192
-        private const val RECONNECT_DELAY_MS = 1_500L
-        private const val SCAN_ERROR_RETRY_MS = 5_000L          // retry after scan failure
-        private const val SCAN_RESTART_INTERVAL_MS = 5 * 60_000L // every 5 min
+        private const val 日志标记 = "蓝牙引擎"
+        private const val 最大缓冲字符数 = 8192
+        private const val 重连延迟毫秒 = 1_500L
+        private const val 扫描错误重试毫秒 = 5_000L          // retry after scan failure
+        private const val 扫描重启间隔毫秒 = 5 * 60_000L // every 5 min
     }
 }

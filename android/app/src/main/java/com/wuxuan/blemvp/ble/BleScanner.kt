@@ -11,86 +11,86 @@ import android.os.ParcelUuid
 import android.util.Log
 
 class 蓝牙扫描器(
-    private val bluetoothAdapter: BluetoothAdapter,
-    private val onDiscovered: (BluetoothDevice) -> Unit,
-    private val onScanStarted: (mode: String) -> Unit = {},
-    private val onScanError: (String) -> Unit = {}
+    private val 蓝牙适配器: BluetoothAdapter,
+    private val on发现设备: (BluetoothDevice) -> Unit,
+    private val on扫描已启动: (mode: String) -> Unit = {},
+    private val on扫描错误: (String) -> Unit = {}
 ) {
 
-    private val seenAddresses = mutableSetOf<String>()
+    private val 已见地址 = mutableSetOf<String>()
 
     private val 扫描器: BluetoothLeScanner?
-        get() = bluetoothAdapter.bluetoothLeScanner
+        get() = 蓝牙适配器.bluetoothLeScanner
 
-    private val callback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            if (result == null) return
-            val device = result.device
-            val address = device.address
-            // Skip addresses we have already handed to onDiscovered.
-            if (seenAddresses.contains(address)) return
+    private val 回调 = object : ScanCallback() {
+        override fun onScanResult(回调类型: Int, 扫描结果: ScanResult?) {
+            if (扫描结果 == null) return
+            val 设备 = 扫描结果.device
+            val 地址 = 设备.address
+            // Skip 地址列表 we have already handed to on发现设备.
+            if (已见地址.contains(地址)) return
 
-            val uuids = result.scanRecord?.serviceUuids.orEmpty()
-            val hasTargetService = uuids.any { it.uuid == 蓝牙常量.服务UUID }
-            val marker = result.scanRecord?.getManufacturerSpecificData(蓝牙常量.厂商编号)
-            val hasAppMarker = marker?.contentEquals(蓝牙常量.应用标记) == true
+            val 识别码列表 = 扫描结果.scanRecord?.serviceUuids.orEmpty()
+            val 有目标服务 = 识别码列表.any { it.uuid == 蓝牙常量.服务UUID }
+            val 标记 = 扫描结果.scanRecord?.getManufacturerSpecificData(蓝牙常量.厂商编号)
+            val 有应用标记 = 标记?.contentEquals(蓝牙常量.应用标记) == true
 
-            if (hasTargetService && hasAppMarker) {
-                // Only lock the address in once we've confirmed it carries our app data.
-                // A device whose first 传输包 has no service UUID will be re-evaluated on
-                // the next scan result rather than getting silently blacklisted.
-                seenAddresses.add(address)
-                Log.d(TAG, "Discovered target device: $address")
-                onDiscovered(device)
+            if (有目标服务 && 有应用标记) {
+                // Only lock the 地址 in once we've confirmed it carries our app data.
+                // A 设备 whose first 传输包 has no service UUID will be re-evaluated on
+                // the next scan 扫描结果 rather than getting silently blacklisted.
+                已见地址.add(地址)
+                Log.d(日志标记, "Discovered target 设备: $地址")
+                on发现设备(设备)
                 return
             }
 
-            Log.d(TAG, "Ignoring non-target device: $address")
+            Log.d(日志标记, "Ignoring non-target 设备: $地址")
         }
 
-        override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "Scan failed with code: $errorCode")
-            onScanError("scan failed: code=$errorCode")
+        override fun onScanFailed(错误码: Int) {
+            Log.e(日志标记, "Scan failed with code: $错误码")
+            on扫描错误("scan failed: code=$错误码")
         }
     }
 
     @SuppressLint("MissingPermission")
     fun 开始扫描() {
-        seenAddresses.clear()
+        已见地址.clear()
 
-        val settings = ScanSettings.Builder()
+        val 扫描设置 = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        val leScanner = 扫描器
-        if (leScanner == null) {
-            onScanError("扫描器 unavailable")
+        val 低功耗扫描器 = 扫描器
+        if (低功耗扫描器 == null) {
+            on扫描错误("扫描器 unavailable")
             return
         }
 
         // Stop any existing scan first
-        try { leScanner.stopScan(callback) } catch (_: Throwable) {}
+        try { 低功耗扫描器.stopScan(回调) } catch (_: Throwable) {}
 
         try {
-            leScanner.startScan(null, settings, callback)
-            onScanStarted("unfiltered")
-            Log.d(TAG, "BLE scan started (unfiltered)")
+            低功耗扫描器.startScan(null, 扫描设置, 回调)
+            on扫描已启动("unfiltered")
+            Log.d(日志标记, "BLE scan started (unfiltered)")
         } catch (t: Throwable) {
-            Log.e(TAG, "Unfiltered scan failed", t)
-            onScanError("scan 启动 failed: ${t.message ?: "unknown"}")
+            Log.e(日志标记, "Unfiltered scan failed", t)
+            on扫描错误("scan 启动 failed: ${t.message ?: "unknown"}")
         }
     }
 
     @SuppressLint("MissingPermission")
     fun 停止扫描() {
-        扫描器?.stopScan(callback)
+        扫描器?.stopScan(回调)
     }
 
-    fun 忘记地址(address: String) {
-        seenAddresses.remove(address)
+    fun 忘记地址(地址: String) {
+        已见地址.remove(地址)
     }
 
     companion object {
-        private const val TAG = "蓝牙扫描器"
+        private const val 日志标记 = "蓝牙扫描器"
     }
 }

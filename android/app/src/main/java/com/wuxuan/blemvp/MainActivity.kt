@@ -56,10 +56,10 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bleEngine: 蓝牙引擎
-    private val bleStatusFlow = MutableStateFlow("BLE: starting…")
+    private lateinit var 本引擎: 蓝牙引擎
+    private val 蓝牙状态流 = MutableStateFlow("BLE: starting…")
 
-    private val requiredPermissions: Array<String>
+    private val 所需权限: Array<String>
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // BLUETOOTH_SCAN is declared with neverForLocation in the manifest,
             // so ACCESS_FINE_LOCATION is not required on Android 12+.
@@ -72,46 +72,46 @@ class MainActivity : ComponentActivity() {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun onCreate(已保存状态: Bundle?) {
+        super.onCreate(已保存状态)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        bleEngine = 蓝牙引擎(this)
-        bleEngine.设置生命周期监听器 { state, detail ->
-            bleStatusFlow.value = "[$state] $detail"
+        本引擎 = 蓝牙引擎(this)
+        本引擎.设置生命周期监听器 { 状态, 详情 ->
+            蓝牙状态流.value = "[$状态] $详情"
         }
-        val db = AppDatabase.getInstance(this)
-        requestBlePermissionsIfNeeded()
+        val 数据库 = AppDatabase.getInstance(this)
+        按需请求蓝牙权限()
 
-        val postsFlow = db.postDao().getAllLatestFirstFlow()
+        val 帖子流 = 数据库.postDao().getAllLatestFirstFlow()
 
         // Start BLE immediately if permissions are already granted (e.g. re-launch after first run).
         // On first install, 启动 is deferred to onRequestPermissionsResult.
-        if (hasAllPermissions()) bleEngine.启动()
+        if (已有全部权限()) 本引擎.启动()
 
         setContent {
             MaterialTheme {
-                var inputText by remember { mutableStateOf("") }
-                val bleStatus by bleStatusFlow.collectAsState()
+                var 输入文本 by remember { mutableStateOf("") }
+                val 蓝牙状态 by 蓝牙状态流.collectAsState()
                 帖子流界面(
-                    postsFlow = postsFlow,
-                    bleStatus = bleStatus,
-                    inputText = inputText,
-                    onInputChange = { inputText = it },
-                    onForceSync = { bleEngine.强制同步() },
-                    onPost = {
-                        val msg = inputText.trim()
-                        if (msg.isNotEmpty()) {
-                            val (sendCount, encodedBytes) = bleEngine.发送帖子给所有邻机(msg)
-                            if (sendCount == 0) {
-                                val snapshot = bleEngine.获取邻机快照()
-                                if (snapshot.可写邻机数 > 0) {
+                    帖子流 = 帖子流,
+                    蓝牙状态 = 蓝牙状态,
+                    输入文本 = 输入文本,
+                    输入变化 = { 输入文本 = it },
+                    强制同步 = { 本引擎.强制同步() },
+                    发帖 = {
+                        val 待发正文 = 输入文本.trim()
+                        if (待发正文.isNotEmpty()) {
+                            val (发送数量, 已编码字节) = 本引擎.发送帖子给所有邻机(待发正文)
+                            if (发送数量 == 0) {
+                                val 快照 = 本引擎.获取邻机快照()
+                                if (快照.可写邻机数 > 0) {
                                     lifecycleScope.launch {
                                         delay(400)
-                                        bleEngine.重试发送给所有邻机(encodedBytes)
+                                        本引擎.重试发送给所有邻机(已编码字节)
                                     }
                                 }
                             }
-                            inputText = ""
+                            输入文本 = ""
                         }
                     }
                 )
@@ -122,13 +122,13 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Restart scan + advertising every time the user brings the app to the foreground.
-        if (::bleEngine.isInitialized) bleEngine.重启扫描()
+        if (::本引擎.isInitialized) 本引擎.重启扫描()
     }
 
     override fun onDestroy() {
-        bleEngine.设置生命周期监听器(null)
-        bleEngine.停止()
-        bleEngine.关闭()
+        本引擎.设置生命周期监听器(null)
+        本引擎.停止()
+        本引擎.关闭()
         super.onDestroy()
     }
 
@@ -138,43 +138,43 @@ class MainActivity : ComponentActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_CODE_BLE_PERMS && hasAllPermissions()) {
-            bleEngine.启动()
+        if (requestCode == 蓝牙权限请求码 && 已有全部权限()) {
+            本引擎.启动()
         }
     }
 
-    private fun hasAllPermissions() = requiredPermissions.all {
+    private fun 已有全部权限() = 所需权限.all {
         ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun requestBlePermissionsIfNeeded() {
-        val missing = requiredPermissions.filter {
+    private fun 按需请求蓝牙权限() {
+        val 缺失权限 = 所需权限.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_BLE_PERMS)
+        if (缺失权限.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, 缺失权限.toTypedArray(), 蓝牙权限请求码)
         }
     }
 
     companion object {
-        private const val REQUEST_CODE_BLE_PERMS = 1001
+        private const val 蓝牙权限请求码 = 1001
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun 帖子流界面(
-    postsFlow: Flow<List<PostEntity>>,
-    bleStatus: String,
-    inputText: String,
-    onInputChange: (String) -> Unit,
-    onForceSync: () -> Unit,
-    onPost: () -> Unit
+    帖子流: Flow<List<PostEntity>>,
+    蓝牙状态: String,
+    输入文本: String,
+    输入变化: (String) -> Unit,
+    强制同步: () -> Unit,
+    发帖: () -> Unit
 ) {
-    val posts by postsFlow.collectAsState(initial = emptyList())
-    val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
+    val posts by 帖子流.collectAsState(initial = emptyList())
+    val 剪贴板 = LocalClipboardManager.current
+    val 上下文 = LocalContext.current
+    val 焦点管理器 = LocalFocusManager.current
 
     Column(
         modifier = Modifier
@@ -184,15 +184,15 @@ private fun 帖子流界面(
             .padding(16.dp)
     ) {
         // Debug toggle row
-        var showDebug by rememberSaveable { mutableStateOf(false) }
+        var 显示调试信息 by rememberSaveable { mutableStateOf(false) }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (showDebug) {
+            if (显示调试信息) {
                 Text(
-                    text = bleStatus,
+                    text = 蓝牙状态,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
@@ -203,24 +203,24 @@ private fun 帖子流界面(
             Text(
                 text = "DBG v0.0.1",
                 style = MaterialTheme.typography.labelSmall,
-                color = if (showDebug) MaterialTheme.colorScheme.primary
+                color = if (显示调试信息) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                 modifier = Modifier
                     .combinedClickable(
-                        onClick = { showDebug = !showDebug },
-                        onLongClick = { onForceSync() }
+                        onClick = { 显示调试信息 = !显示调试信息 },
+                        onLongClick = { 强制同步() }
                     )
                     .padding(4.dp)
             )
         }
         // Post feed — latest on top, right-aligned, full text (no truncation)
-        val listState = rememberLazyListState()
-        // Auto-scroll to top whenever the newest post changes (local or received)
+        val 列表状态 = rememberLazyListState()
+        // Auto-scroll to top whenever the newest 帖子记录 changes (local or received)
         LaunchedEffect(posts.firstOrNull()?.id) {
-            if (posts.isNotEmpty()) listState.animateScrollToItem(0)
+            if (posts.isNotEmpty()) 列表状态.animateScrollToItem(0)
         }
         LazyColumn(
-            state = listState,
+            state = 列表状态,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -241,9 +241,9 @@ private fun 帖子流界面(
                     }
                 }
             } else {
-                items(posts, key = { it.id }) { post ->
+                items(posts, key = { it.id }) { 帖子记录 ->
                     Text(
-                        text = post.text,
+                        text = 帖子记录.text,
                         color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.End,
                         modifier = Modifier
@@ -251,8 +251,8 @@ private fun 帖子流界面(
                             .combinedClickable(
                                 onClick = {},
                                 onLongClick = {
-                                    clipboardManager.setText(AnnotatedString(post.text))
-                                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                    剪贴板.setText(AnnotatedString(帖子记录.text))
+                                    Toast.makeText(上下文, "Copied", Toast.LENGTH_SHORT).show()
                                 }
                             )
                             .padding(vertical = 4.dp)
@@ -268,8 +268,8 @@ private fun 帖子流界面(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             OutlinedTextField(
-                value = inputText,
-                onValueChange = onInputChange,
+                value = 输入文本,
+                onValueChange = 输入变化,
                 placeholder = { Text("Type a post") },
                 modifier = Modifier.weight(1f),
                 singleLine = false,
@@ -277,10 +277,10 @@ private fun 帖子流界面(
             )
             Button(
                 onClick = {
-                    onPost()
-                    focusManager.clearFocus()
+                    发帖()
+                    焦点管理器.clearFocus()
                 },
-                enabled = inputText.trim().isNotEmpty(),
+                enabled = 输入文本.trim().isNotEmpty(),
                 modifier = Modifier.align(Alignment.CenterVertically)
             ) {
                 Text("Post")
