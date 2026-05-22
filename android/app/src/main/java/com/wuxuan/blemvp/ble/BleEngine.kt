@@ -7,10 +7,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.util.Log
+import com.wuxuan.blemvp.model.判断猜拳结果
 import com.wuxuan.blemvp.model.帖子
 import com.wuxuan.blemvp.model.帖子载荷
 import com.wuxuan.blemvp.model.传输编解码器
 import com.wuxuan.blemvp.model.传输包
+import com.wuxuan.blemvp.model.猜拳手势
+import com.wuxuan.blemvp.model.猜拳日志
+import com.wuxuan.blemvp.model.猜拳界面状态
+import com.wuxuan.blemvp.model.猜拳载荷
 import com.wuxuan.blemvp.storage.AppDatabase
 import com.wuxuan.blemvp.storage.PostEntity
 import kotlinx.coroutines.CoroutineScope
@@ -18,8 +23,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.security.MessageDigest
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -33,6 +42,13 @@ class 蓝牙引擎(上下文: Context) {
     private val 存储协程域 = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val 帖子访问对象 = AppDatabase.getInstance(应用上下文).postDao()
     private val 已知帖子编号: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+    private val 已处理游戏事件编号: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+    private val _猜拳状态流 = MutableStateFlow(猜拳界面状态())
+    val 猜拳状态流: StateFlow<猜拳界面状态> = _猜拳状态流.asStateFlow()
+    private var 本局盐值: String = UUID.randomUUID().toString()
+    private var 本方已公开 = false
+    private var 对方提交哈希: String? = null
+    private var 对方编号: String? = null
 
     private val 本机设备编号: String = run {
         val 偏好设置 = 应用上下文.getSharedPreferences("blemvp_prefs", Context.MODE_PRIVATE)
@@ -125,6 +141,8 @@ class 蓝牙引擎(上下文: Context) {
                     if (保存载荷(收到包.载荷, "recv:$来源地址")) {
                         发出状态(蓝牙生命周期状态.运行中, "RECV from $来源地址: ${收到包.载荷.正文}")
                     }
+                } else if (收到包 is 传输包.猜拳包) {
+                    处理猜拳载荷(收到包.载荷, 来源地址)
                 } else {
                     Log.d(日志标记, "解码 returned null or non-message 传输包")
                 }
@@ -146,6 +164,9 @@ class 蓝牙引擎(上下文: Context) {
                     if (保存载荷(收到包.载荷, "recv-compat:$来源地址")) {
                         发出状态(蓝牙生命周期状态.运行中, "RECV from $来源地址: ${收到包.载荷.正文}")
                     }
+                    buffer.reset()
+                } else if (收到包 is 传输包.猜拳包) {
+                    处理猜拳载荷(收到包.载荷, 来源地址)
                     buffer.reset()
                 }
             }
@@ -194,6 +215,32 @@ class 蓝牙引擎(上下文: Context) {
 
     fun 获取邻机快照(): 蓝牙中心连接器.邻机快照 {
         return 中心连接器.获取邻机快照()
+    }
+
+    fun 选择猜拳手势(手势: 猜拳手势) {
+        if (_猜拳状态流.value.本方选择 != null) return
+        _猜拳状态流.value = _猜拳状态流.value.copy(
+            本方选择 = 手势,
+            日志 = 添加猜拳日志(_猜拳状态流.value.日志, 猜拳日志.本方已出)
+        )
+        发送猜拳载荷(
+            事件 = "commit",
+            提交哈希 = 生成提交哈希(_猜拳状态流.value.局编号, 本机设备编号, 手势, 本局盐值)
+        )
+        尝试公开本方选择()
+    }
+
+    fun 重新开始猜拳() {
+        val 新局编号 = UUID.randomUUID().toString()
+        本局盐值 = UUID.randomUUID().toString()
+        本方已公开 = false
+        对方提交哈希 = null
+        对方编号 = null
+        _猜拳状态流.value = 猜拳界面状态(
+            局编号 = 新局编号,
+            日志 = 添加猜拳日志(emptyList(), 猜拳日志.重新开始)
+        )
+        发送猜拳载荷(事件 = "reset")
     }
 
     /** Push our full local history to every currently-writable peer. Call this manually
@@ -350,6 +397,124 @@ class 蓝牙引擎(上下文: Context) {
             }
         }
         return true
+    }
+
+    private fun 处理猜拳载荷(载荷: 猜拳载荷, 来源地址: String) {
+        if (载荷.发送方 == 本机设备编号) return
+        if (!已处理游戏事件编号.add(载荷.编号)) return
+        when (载荷.事件) {
+            "reset" -> {
+                本局盐值 = UUID.randomUUID().toString()
+                本方已公开 = false
+                对方提交哈希 = null
+                对方编号 = 载荷.发送方
+                _猜拳状态流.value = 猜拳界面状态(
+                    局编号 = 载荷.局编号,
+                    日志 = 添加猜拳日志(emptyList(), 猜拳日志.对方重新开始)
+                )
+                发出状态(蓝牙生命周期状态.运行中, "RPS reset from $来源地址")
+            }
+            "commit" -> {
+                if (载荷.局编号 != _猜拳状态流.value.局编号) {
+                    if (_猜拳状态流.value.本方选择 == null && _猜拳状态流.value.对方选择 == null) {
+                        _猜拳状态流.value = 猜拳界面状态(局编号 = 载荷.局编号)
+                        本局盐值 = UUID.randomUUID().toString()
+                        本方已公开 = false
+                        对方提交哈希 = null
+                    } else {
+                        return
+                    }
+                }
+                对方提交哈希 = 载荷.提交哈希 ?: return
+                对方编号 = 载荷.发送方
+                _猜拳状态流.value = _猜拳状态流.value.copy(
+                    对方已出 = true,
+                    日志 = 添加猜拳日志(_猜拳状态流.value.日志, 猜拳日志.对方已出)
+                )
+                尝试公开本方选择()
+                发出状态(蓝牙生命周期状态.运行中, "RPS commit from $来源地址")
+            }
+            "reveal" -> {
+                if (载荷.局编号 != _猜拳状态流.value.局编号) return
+                val 对方手势 = 猜拳手势.fromWire(载荷.手势) ?: return
+                val 对方盐值 = 载荷.盐值 ?: return
+                val 期待哈希 = 生成提交哈希(载荷.局编号, 载荷.发送方, 对方手势, 对方盐值)
+                if (期待哈希 != 对方提交哈希) {
+                    _猜拳状态流.value = _猜拳状态流.value.copy(
+                        日志 = 添加猜拳日志(_猜拳状态流.value.日志, 猜拳日志.校验失败)
+                    )
+                    return
+                }
+                val 本方手势 = _猜拳状态流.value.本方选择
+                _猜拳状态流.value = _猜拳状态流.value.copy(
+                    对方选择 = 对方手势,
+                    结果 = if (本方手势 != null) 判断猜拳结果(本方手势, 对方手势) else null,
+                    日志 = 添加猜拳日志(_猜拳状态流.value.日志, 猜拳日志.对方已公开)
+                )
+                发出状态(蓝牙生命周期状态.运行中, "RPS reveal from $来源地址")
+            }
+        }
+    }
+
+    private fun 尝试公开本方选择() {
+        val 本方手势 = _猜拳状态流.value.本方选择 ?: return
+        if (本方已公开 || 对方提交哈希 == null) return
+        本方已公开 = true
+        发送猜拳载荷(
+            事件 = "reveal",
+            手势 = 本方手势.wireValue,
+            盐值 = 本局盐值
+        )
+        val 对方手势 = _猜拳状态流.value.对方选择
+        _猜拳状态流.value = _猜拳状态流.value.copy(
+            结果 = if (对方手势 != null) 判断猜拳结果(本方手势, 对方手势) else _猜拳状态流.value.结果,
+            日志 = 添加猜拳日志(_猜拳状态流.value.日志, 猜拳日志.本方已公开)
+        )
+    }
+
+    private fun 发送猜拳载荷(
+        事件: String,
+        手势: String? = null,
+        盐值: String? = null,
+        提交哈希: String? = null
+    ) {
+        val 载荷 = 猜拳载荷(
+            编号 = UUID.randomUUID().toString(),
+            局编号 = _猜拳状态流.value.局编号,
+            发送方 = 本机设备编号,
+            事件 = 事件,
+            手势 = 手势,
+            盐值 = 盐值,
+            提交哈希 = 提交哈希
+        )
+        val framed = 传输编解码器.编码(传输包.猜拳包(载荷)) + "\n"
+        val bytes = framed.toByteArray(Charsets.UTF_8)
+        val count = 中心连接器.发送给所有已连接Gatt(bytes)
+        if (count == 0 && 中心连接器.获取邻机快照().可写邻机数 > 0) {
+            存储协程域.launch {
+                delay(400)
+                withContext(Dispatchers.Main) {
+                    中心连接器.发送给所有已连接Gatt(bytes)
+                }
+            }
+        }
+        Log.d(日志标记, "RPS event=$事件 sent count=$count")
+    }
+
+    private fun 添加猜拳日志(当前日志: List<猜拳日志>, 新日志: 猜拳日志): List<猜拳日志> {
+        return (listOf(新日志) + 当前日志).take(8)
+    }
+
+    private fun 生成提交哈希(
+        局编号: String,
+        发送方: String,
+        手势: 猜拳手势,
+        盐值: String
+    ): String {
+        val bytes = "$局编号|$发送方|${手势.wireValue}|$盐值".toByteArray(Charsets.UTF_8)
+        return MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
     }
 
     private fun 同步历史给邻机(address: String) {

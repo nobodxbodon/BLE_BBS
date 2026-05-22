@@ -4,4 +4,27 @@
     <string name="action_post">发布</string>
     <string name="toast_copied">已复制</string>
     <string name="empty_posts">暂无帖文</string>
+    <string name="rps_title">石头剪刀布</string>
+    <string name="rps_connection_status">连接：%1$s</string>
+    <string name="rps_local_choice_empty">本方选择：未选择</string>
+    <string name="rps_local_choice">本方选择：%1$s</string>
+    <string name="rps_peer_waiting">对方：等待出拳</string>
+    <string name="rps_peer_chosen">对方：已出拳，双方公开前隐藏</string>
+    <string name="rps_peer_choice">对方：%1$s</string>
+    <string name="rps_result_pending">结果：等待中</string>
+    <string name="rps_result_win">结果：本方胜</string>
+    <string name="rps_result_lose">结果：对方胜</string>
+    <string name="rps_result_draw">结果：平局</string>
+    <string name="rps_rock">石头</string>
+    <string name="rps_scissors">剪刀</string>
+    <string name="rps_paper">布</string>
+    <string name="rps_restart">重新开始</string>
+    <string name="rps_log_title">日志</string>
+    <string name="rps_log_local_committed">本方已出拳，等待对方。</string>
+    <string name="rps_log_peer_committed">对方已出拳，等待公开。</string>
+    <string name="rps_log_local_revealed">双方都出拳后，本方选择已公开。</string>
+    <string name="rps_log_peer_revealed">对方选择已校验并公开。</string>
+    <string name="rps_log_peer_reset">对方开始了新一局。</string>
+    <string name="rps_log_verify_failed">对方公开内容和之前提交不一致。</string>
+    <string name="rps_log_reset">已开始新一局。</string>
 </resources>

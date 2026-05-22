@@ -4,4 +4,27 @@
     <string name="action_post">Post</string>
     <string name="toast_copied">Copied</string>
     <string name="empty_posts">No posts yet</string>
+    <string name="rps_title">Rock Paper Scissors</string>
+    <string name="rps_connection_status">Connection: %1$s</string>
+    <string name="rps_local_choice_empty">Your choice: not chosen</string>
+    <string name="rps_local_choice">Your choice: %1$s</string>
+    <string name="rps_peer_waiting">Peer: waiting</string>
+    <string name="rps_peer_chosen">Peer: chosen, hidden until both sides reveal</string>
+    <string name="rps_peer_choice">Peer: %1$s</string>
+    <string name="rps_result_pending">Result: waiting</string>
+    <string name="rps_result_win">Result: you win</string>
+    <string name="rps_result_lose">Result: you lose</string>
+    <string name="rps_result_draw">Result: draw</string>
+    <string name="rps_rock">Rock</string>
+    <string name="rps_scissors">Scissors</string>
+    <string name="rps_paper">Paper</string>
+    <string name="rps_restart">New round</string>
+    <string name="rps_log_title">Log</string>
+    <string name="rps_log_local_committed">You chose, waiting for peer.</string>
+    <string name="rps_log_peer_committed">Peer chose, waiting for reveal.</string>
+    <string name="rps_log_local_revealed">Your choice was revealed after both sides chose.</string>
+    <string name="rps_log_peer_revealed">Peer choice was verified and revealed.</string>
+    <string name="rps_log_peer_reset">Peer started a new round.</string>
+    <string name="rps_log_verify_failed">Peer reveal did not match the earlier commit.</string>
+    <string name="rps_log_reset">New round started.</string>
 </resources>

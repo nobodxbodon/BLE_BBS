@@ -37,9 +37,22 @@ data class 帖子载荷(
     }
 }
 
+@Serializable
+data class 猜拳载荷(
+    @SerialName("id") val 编号: String,
+    @SerialName("roundID") val 局编号: String,
+    @SerialName("sender") val 发送方: String,
+    @SerialName("event") val 事件: String,
+    @SerialName("move") val 手势: String? = null,
+    @SerialName("salt") val 盐值: String? = null,
+    @SerialName("commit") val 提交哈希: String? = null,
+    @SerialName("timestamp") val 时间戳: String = DateTimeFormatter.ISO_INSTANT.format(Instant.now())
+)
+
 sealed class 传输包 {
     data class 帖子包(val 载荷: 帖子载荷) : 传输包()
     data class 确认包(val 确认编号: String) : 传输包()
+    data class 猜拳包(val 载荷: 猜拳载荷) : 传输包()
 }
 
 object 传输编解码器 {
@@ -55,6 +68,11 @@ object 传输编解码器 {
             is 传输包.确认包 -> buildJsonObject {
                 put("kind", JsonPrimitive("ack"))
                 put("ackID", JsonPrimitive(传输包.确认编号))
+            }
+
+            is 传输包.猜拳包 -> buildJsonObject {
+                put("kind", JsonPrimitive("game"))
+                put("game", json.encodeToJsonElement(猜拳载荷.serializer(), 传输包.载荷))
             }
         }
         return json.encodeToString(JsonObject.serializer(), obj)
@@ -72,6 +90,11 @@ object 传输编解码器 {
                 "ack" -> {
                     val 确认编号 = obj["ackID"]?.jsonPrimitive?.contentOrNull
                     if (确认编号 != null) 传输包.确认包(确认编号) else null
+                }
+
+                "game" -> {
+                    val 载荷 = obj["game"]?.let { json.decodeFromJsonElement(猜拳载荷.serializer(), it) }
+                    if (载荷 != null) 传输包.猜拳包(载荷) else null
                 }
 
                 else -> null

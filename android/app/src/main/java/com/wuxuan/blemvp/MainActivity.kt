@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -44,6 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.wuxuan.blemvp.ble.蓝牙引擎
+import com.wuxuan.blemvp.model.猜拳手势
+import com.wuxuan.blemvp.model.猜拳日志
+import com.wuxuan.blemvp.model.猜拳界面状态
+import com.wuxuan.blemvp.model.猜拳结果
 import com.wuxuan.blemvp.storage.AppDatabase
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -91,30 +96,13 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                var 输入文本 by remember { mutableStateOf("") }
                 val 蓝牙状态 by 蓝牙状态流.collectAsState()
-                帖子流界面(
-                    帖子流 = 帖子流,
+                val 猜拳状态 by 本引擎.猜拳状态流.collectAsState()
+                猜拳界面(
                     蓝牙状态 = 蓝牙状态,
-                    输入文本 = 输入文本,
-                    输入变化 = { 输入文本 = it },
-                    强制同步 = { 本引擎.强制同步() },
-                    发帖 = {
-                        val 待发正文 = 输入文本.trim()
-                        if (待发正文.isNotEmpty()) {
-                            val (发送数量, 已编码字节) = 本引擎.发送帖子给所有邻机(待发正文)
-                            if (发送数量 == 0) {
-                                val 快照 = 本引擎.获取邻机快照()
-                                if (快照.可写邻机数 > 0) {
-                                    lifecycleScope.launch {
-                                        delay(400)
-                                        本引擎.重试发送给所有邻机(已编码字节)
-                                    }
-                                }
-                            }
-                            输入文本 = ""
-                        }
-                    }
+                    猜拳状态 = 猜拳状态,
+                    选择手势 = { 本引擎.选择猜拳手势(it) },
+                    重新开始 = { 本引擎.重新开始猜拳() }
                 )
             }
         }
@@ -163,6 +151,113 @@ class MainActivity : ComponentActivity() {
 }
 
 private const val SHOW_DEBUG_ROW = false
+
+@Composable
+private fun 猜拳界面(
+    蓝牙状态: String,
+    猜拳状态: 猜拳界面状态,
+    选择手势: (猜拳手势) -> Unit,
+    重新开始: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = stringResource(R.string.rps_title),
+            style = MaterialTheme.typography.headlineSmall
+        )
+        Text(
+            text = stringResource(R.string.rps_connection_status, 蓝牙状态),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = 猜拳状态.本方选择?.let {
+                stringResource(R.string.rps_local_choice, 手势文字(it))
+            } ?: stringResource(R.string.rps_local_choice_empty),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Text(
+            text = when {
+                猜拳状态.对方选择 != null -> stringResource(
+                    R.string.rps_peer_choice,
+                    手势文字(猜拳状态.对方选择)
+                )
+                猜拳状态.对方已出 -> stringResource(R.string.rps_peer_chosen)
+                else -> stringResource(R.string.rps_peer_waiting)
+            },
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Text(
+            text = 猜拳状态.结果?.let { 结果文字(it) }
+                ?: stringResource(R.string.rps_result_pending),
+            style = MaterialTheme.typography.titleMedium
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            猜拳手势.entries.forEach { 手势 ->
+                Button(
+                    onClick = { 选择手势(手势) },
+                    enabled = 猜拳状态.本方选择 == null,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(手势文字(手势))
+                }
+            }
+        }
+        OutlinedButton(onClick = 重新开始) {
+            Text(stringResource(R.string.rps_restart))
+        }
+        Text(
+            text = stringResource(R.string.rps_log_title),
+            style = MaterialTheme.typography.titleSmall
+        )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            items(猜拳状态.日志) { 日志 ->
+                Text(
+                    text = 日志文字(日志),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 3.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun 手势文字(手势: 猜拳手势): String = when (手势) {
+    猜拳手势.石头 -> stringResource(R.string.rps_rock)
+    猜拳手势.剪刀 -> stringResource(R.string.rps_scissors)
+    猜拳手势.布 -> stringResource(R.string.rps_paper)
+}
+
+@Composable
+private fun 结果文字(结果: 猜拳结果): String = when (结果) {
+    猜拳结果.本方胜 -> stringResource(R.string.rps_result_win)
+    猜拳结果.对方胜 -> stringResource(R.string.rps_result_lose)
+    猜拳结果.平局 -> stringResource(R.string.rps_result_draw)
+}
+
+@Composable
+private fun 日志文字(日志: 猜拳日志): String = when (日志) {
+    猜拳日志.本方已出 -> stringResource(R.string.rps_log_local_committed)
+    猜拳日志.对方已出 -> stringResource(R.string.rps_log_peer_committed)
+    猜拳日志.本方已公开 -> stringResource(R.string.rps_log_local_revealed)
+    猜拳日志.对方已公开 -> stringResource(R.string.rps_log_peer_revealed)
+    猜拳日志.对方重新开始 -> stringResource(R.string.rps_log_peer_reset)
+    猜拳日志.校验失败 -> stringResource(R.string.rps_log_verify_failed)
+    猜拳日志.重新开始 -> stringResource(R.string.rps_log_reset)
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
